@@ -75,9 +75,23 @@ git submodule update --init --recursive   # brings in Vendor/ntsc-rs
 ./scripts/build-ntscrs.sh                 # cargo-builds Vendor/ntscrs-capi/ntscrs_capi.dylib
 ```
 
-The "VHS (ntsc-rs)" panel appears enabled-able in the sidebar when the dylib is present (the app runs fine without it). Its controls are generated from ntsc-rs's own settings schema, and settings use ntsc-rs's preset JSON format — presets copy/paste both ways with the ntsc-rs desktop app. Turn on **Animate** in the View panel to see noise, jitter, and tracking move; frame-seeded randomness means exports are deterministic.
+The "VHS (ntsc-rs)" panel appears enabled-able in the sidebar when the dylib is present (the app runs fine without it). Its controls are generated from ntsc-rs's own settings schema, and settings use ntsc-rs's preset JSON format — presets copy/paste both ways with the ntsc-rs desktop app. Turn on **Animate** in the view palette (floating over the preview) to see noise, jitter, and tracking move; frame-seeded randomness means exports are deterministic.
 
 Env overrides: `CRT_NTSCRS=<dylib path>`, `CRT_NTSC=1` (start with the stage enabled).
+
+## Dev hooks (env vars)
+
+For iteration and headless/screenshot verification:
+
+- `CRT_SOURCE=<path>` — preload an image or video at launch
+- `CRT_PRESET=<id>` — start on a shader preset (ids in `Presets.swift`, e.g. `royale`, `hyllian`)
+- `CRT_NTSC=1` — start with the VHS stage enabled
+- `CRT_NTSCRS` / `CRT_LIBRASHADER` / `CRT_PRESETS` — override dylib/shader locations
+- `CRT_PERF_LOG=1` — log chain-render vs composite-only draws to stderr
+- `CRT_DUMP_CONTROLS=1` — print the param→control classification for every preset, then exit
+- `CRT_FORCE_MANAGED=1` — use `.managed` CPU-readback textures (the discrete-GPU path) even on unified memory
+- `CRT_PALETTE_FADE=<seconds>` — override the floating view palette's 2 s idle fade
+- `CRT_SHOW_EXPORT=1` — open the Export popover at launch
 
 ## Releasing (signed + notarized DMG)
 

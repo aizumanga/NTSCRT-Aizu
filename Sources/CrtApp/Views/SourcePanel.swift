@@ -31,26 +31,8 @@ struct SourcePanel: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let tex = state.sourceTexture {
-                    Text("\(tex.width) × \(tex.height) px")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let vs = state.videoSource {
-                    let total = vs.totalFrames
-                    let idx = Binding<Double>(
-                        get: { Double(state.currentFrameIndex) },
-                        set: { state.currentFrameIndex = Int($0.rounded()) }
-                    )
-                    HStack(spacing: 8) {
-                        Button {
-                            state.togglePlayback()
-                        } label: {
-                            Image(systemName: state.videoPlaying ? "pause.fill" : "play.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .help(state.videoPlaying ? "Pause" : "Play the video in the preview (with all effects applied)")
-                        Slider(value: idx, in: 0...Double(max(1, total - 1)), step: 1)
-                    }
-                    Text("frame \(state.currentFrameIndex + 1) / \(total)  ·  \(String(format: "%.2fs", Double(state.currentFrameIndex) / Double(vs.frameRate)))  ·  \(String(format: "%.0f", vs.frameRate)) fps")
+                    let frames = state.videoSource.map { "  ·  \($0.totalFrames) frames" } ?? ""
+                    Text("\(tex.width) × \(tex.height) px\(frames)")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {

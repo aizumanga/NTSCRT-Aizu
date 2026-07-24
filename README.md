@@ -20,15 +20,16 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 
 ## Using the app
 
-Everything lives in the left sidebar, top to bottom in pipeline order:
+**Toolbar** — file actions live in the window toolbar: **Open** (⌘O) an image (PNG/JPEG/HEIC) or video (MP4/MOV), save/load a **Preset** (your entire configuration — downscale + VHS + shader + view — as a JSON file), and **Export** (⌘E): stills to PNG; videos to H.264/HEVC .mp4 or ProRes .mov (with audio) at your choice of resolution and quality. Scanline detail is brutal on lossy codecs — use the High/Very high quality tiers, or ProRes when it's headed into an edit. Exports are deterministic: same settings + same frame = same pixels.
 
-- **Source** — Open or drag in an image (PNG/JPEG/HEIC) or video (MP4/MOV). Videos get a frame scrubber and a ▶ play button that previews playback with all effects applied.
-- **Export** — stills to PNG; videos to H.264/HEVC .mp4 or ProRes .mov (with audio) at your choice of resolution and quality. Scanline detail is brutal on lossy codecs — use the High/Very high quality tiers, or ProRes when it's headed into an edit. Exports are deterministic: same settings + same frame = same pixels.
-- **Preset** — save your entire configuration (downscale + VHS + shader + view) as a JSON file and load it back later.
+**Preview** — the floating palette holds the display controls. **Compare** (split-square) divides the preview: full pipeline on the left of the line, untouched original on the right — drag the line to move the split. **Integer scale** (grid) locks the image to whole-pixel multiples for perfectly uniform scanlines. **Animate** (sparkles) runs the preview continuously so tape noise, jitter, and interlacing actually move — leave it on for the real experience. Zoom with the slider (or ⌥-scroll), hold Space to pan when zoomed. The palette fades out when the mouse goes idle; move the mouse to bring it back. Videos get a transport bar docked under the preview — play/pause plus a full-width, frame-accurate scrubber, with all effects applied during playback.
+
+**Sidebar** — the creative pipeline, top to bottom in signal order:
+
+- **Source** — the loaded file (drag & drop onto the panel works too).
 - **Downscale** — the retro horizontal resolution the CRT shader sees (SNES 256px, VGA 320px, or any custom width — height always follows your source's aspect ratio) and the resampling method. Nearest keeps pixels crunchy (best for pixel art), Nearest+ keeps the punch without shimmering on video, Area is the smooth neutral choice.
 - **VHS (ntsc-rs)** — the analog signal stage: composite noise, chroma bleed, head switching, tracking noise, tape speed, edge wave, and about sixty more. These are ntsc-rs's own settings — preset JSON copy/pastes both ways with the [ntsc-rs desktop app](https://github.com/ntsc-rs/ntsc-rs/releases).
 - **Shader** — seven RetroArch CRT presets (crt-royale, crt-hyllian, crt-aperture, crt-easymode, two crtglow variants, crtsim) with every runtime parameter exposed. Grayed-out controls tell you which switch activates them — many CRT parameters only apply when their feature (curvature, mask, geometry mode…) is on.
-- **View** — **Compare** splits the preview: full pipeline on the left of the line, untouched original on the right; drag the line. **Integer scale** locks the image to whole-pixel multiples for perfectly uniform scanlines. **Animate** runs the preview continuously so tape noise, jitter, and interlacing actually move — leave it on for the real experience. Zoom with the slider (or ⌥-scroll), hold Space to pan when zoomed.
 
 **Tips**
 

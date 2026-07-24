@@ -311,6 +311,15 @@ final class AppState {
     /// artifacts) are visible. Off = on-demand rendering, zero idle GPU cost.
     var animatePreview: Bool = true { didSet { markChainDirty() } }
 
+    // MARK: - export settings/state (toolbar popover)
+
+    var exportLongEdge: Int = 1920
+    var exportCodec: Mp4Exporter.Codec = .h264
+    var exportQuality: ExportQuality = .high
+    var exportStatus: String = ""
+    var exportProgress: Double = 0
+    var exportWorking: Bool = false
+
     /// True while an MP4 export is running. The exporter drives its own frame
     /// loop against the shared Metal queue, and librashader's Metal runtime is
     /// not thread-safe — the preview suspends animation for the duration.

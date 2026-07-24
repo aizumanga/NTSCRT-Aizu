@@ -4,48 +4,45 @@ import Metal
 import UniformTypeIdentifiers
 import CrtCore
 
-struct ExportPanel: View {
-    @Environment(AppState.self) private var state
+/// Quality tiers as bits-per-pixel-per-frame; actual bitrate scales with
+/// resolution and frame rate. CRT output is worst-case for codecs (full-
+/// frame high-frequency scanlines + animated noise), so these run higher
+/// than typical camera-footage rates.
+enum ExportQuality: String, CaseIterable {
+    case standard = "Standard"
+    case high = "High"
+    case veryHigh = "Very high"
+    case maximum = "Maximum"
 
-    /// Quality tiers as bits-per-pixel-per-frame; actual bitrate scales with
-    /// resolution and frame rate. CRT output is worst-case for codecs (full-
-    /// frame high-frequency scanlines + animated noise), so these run higher
-    /// than typical camera-footage rates.
-    enum ExportQuality: String, CaseIterable {
-        case standard = "Standard"
-        case high = "High"
-        case veryHigh = "Very high"
-        case maximum = "Maximum"
-
-        var bitsPerPixel: Double {
-            switch self {
-            case .standard: return 0.12
-            case .high: return 0.25
-            case .veryHigh: return 0.5
-            case .maximum: return 1.0
-            }
+    var bitsPerPixel: Double {
+        switch self {
+        case .standard: return 0.12
+        case .high: return 0.25
+        case .veryHigh: return 0.5
+        case .maximum: return 1.0
         }
     }
+}
 
-    @State private var longEdge: Int = 1920
-    @State private var status: String = ""
-    @State private var working: Bool = false
-    @State private var progress: Double = 0
-    @State private var codec: Mp4Exporter.Codec = .h264
-    @State private var quality: ExportQuality = .high
+/// Export settings + action, shown from the toolbar Export button. Settings
+/// and progress live in AppState so they survive the popover closing —
+/// the toolbar button shows live progress while an export runs.
+struct ExportPopover: View {
+    @Environment(AppState.self) private var state
 
     private var isVideo: Bool { state.videoSource != nil }
 
     private var computedBitrate: Int {
         let size = outputSize
         let fps = Double(state.videoSource?.frameRate ?? 30)
-        return max(2_000_000, Int(Double(size.width * size.height) * fps * quality.bitsPerPixel))
+        return max(2_000_000, Int(Double(size.width * size.height) * fps * state.exportQuality.bitsPerPixel))
     }
 
     /// Output size derived from the requested long edge and the source aspect.
     /// Even values are required by H.264; the rounding clamps that.
     private var outputSize: (width: Int, height: Int) {
         let aspect = state.sourceAspect
+        let longEdge = state.exportLongEdge
         let w: Int, h: Int
         if aspect >= 1 {
             w = longEdge
@@ -57,20 +54,15 @@ struct ExportPanel: View {
         return (w & ~1, h & ~1)
     }
 
-    @State private var expanded = true
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Twirl(expanded: $expanded)
-                Text("Export").font(.headline)
-            }
+        @Bindable var state = state
+        VStack(alignment: .leading, spacing: 10) {
+            Text(isVideo ? "Export video" : "Export image")
+                .font(.headline)
 
-            if expanded {
-            HStack {
-                Stepper("Long edge \(longEdge) px", value: $longEdge, in: 64...8192, step: 64)
-            }
-            .font(.caption)
+            Stepper("Long edge \(state.exportLongEdge) px",
+                    value: $state.exportLongEdge, in: 64...8192, step: 64)
+                .font(.caption)
 
             let size = outputSize
             Text("Output: \(size.width) × \(size.height) px (matches source aspect)")
@@ -79,7 +71,7 @@ struct ExportPanel: View {
             if isVideo {
                 HStack {
                     Text("Codec").font(.caption)
-                    Picker("", selection: $codec) {
+                    Picker("", selection: $state.exportCodec) {
                         ForEach(Mp4Exporter.Codec.allCases, id: \.self) { c in
                             Text(c.rawValue).tag(c)
                         }
@@ -88,10 +80,10 @@ struct ExportPanel: View {
                     .pickerStyle(.menu)
                     .fixedSize()
                 }
-                if !codec.isProRes {
+                if !state.exportCodec.isProRes {
                     HStack {
                         Text("Quality").font(.caption)
-                        Picker("", selection: $quality) {
+                        Picker("", selection: $state.exportQuality) {
                             ForEach(ExportQuality.allCases, id: \.self) { q in
                                 Text(q.rawValue).tag(q)
                             }
@@ -113,19 +105,20 @@ struct ExportPanel: View {
             Button(buttonLabel) {
                 if isVideo { exportMP4() } else { exportPNG() }
             }
-            .disabled(state.sourceTexture == nil || state.chain == nil || working)
+            .disabled(state.sourceTexture == nil || state.chain == nil || state.exportWorking)
 
-            if working && isVideo {
-                ProgressView(value: progress)
+            if state.exportWorking && isVideo {
+                ProgressView(value: state.exportProgress)
                     .progressViewStyle(.linear)
             }
 
-            if !status.isEmpty {
-                Text(status).font(.caption).foregroundStyle(.secondary)
-            }
+            if !state.exportStatus.isEmpty {
+                Text(state.exportStatus).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .frame(width: 300)
     }
 
     /// "18-07-26 17.42.09" — date + time so repeated exports don't collide.
@@ -136,8 +129,8 @@ struct ExportPanel: View {
     }
 
     private var buttonLabel: String {
-        if working { return isVideo ? "Exporting MP4…" : "Exporting PNG…" }
-        return isVideo ? "Export MP4…" : "Export PNG…"
+        if state.exportWorking { return isVideo ? "Exporting…" : "Exporting PNG…" }
+        return isVideo ? "Export \(state.exportCodec.isProRes ? "MOV" : "MP4")…" : "Export PNG…"
     }
 
     // MARK: - PNG (image source)
@@ -151,16 +144,16 @@ struct ExportPanel: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         let size = outputSize
-        working = true
-        status = "Rendering…"
+        state.exportWorking = true
+        state.exportStatus = "Rendering…"
 
         let device = state.context.device
         let queue = state.context.queue
         guard let target = makeRenderTarget(device: device, width: size.width, height: size.height),
               let staging = makeStagingTexture(device: device, width: size.width, height: size.height),
               let cb = queue.makeCommandBuffer() else {
-            status = "Failed to allocate textures"
-            working = false
+            state.exportStatus = "Failed to allocate textures"
+            state.exportWorking = false
             return
         }
 
@@ -180,13 +173,13 @@ struct ExportPanel: View {
                                       downscale: spec,
                                       frameCount: state.frameCounter)
         } catch {
-            status = "Render failed: \(error.localizedDescription)"
-            working = false
+            state.exportStatus = "Render failed: \(error.localizedDescription)"
+            state.exportWorking = false
             return
         }
 
         guard let blit = cb.makeBlitCommandEncoder() else {
-            status = "Blit encoder failed"; working = false; return
+            state.exportStatus = "Blit encoder failed"; state.exportWorking = false; return
         }
         blit.copy(from: target,
                   sourceSlice: 0, sourceLevel: 0,
@@ -208,11 +201,11 @@ struct ExportPanel: View {
                 do {
                     let cg = try makeCGImage(from: staging)
                     try writePNG(cg, to: url)
-                    status = "Wrote \(url.lastPathComponent) (\(size.width) × \(size.height))"
+                    state.exportStatus = "Wrote \(url.lastPathComponent) (\(size.width) × \(size.height))"
                 } catch {
-                    status = "Write failed: \(error.localizedDescription)"
+                    state.exportStatus = "Write failed: \(error.localizedDescription)"
                 }
-                working = false
+                state.exportWorking = false
             }
         }
         cb.commit()
@@ -223,6 +216,7 @@ struct ExportPanel: View {
     private func exportMP4() {
         guard let vs = state.videoSource else { return }
         let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
+        let codec = state.exportCodec
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [codec.isProRes ? .quickTimeMovie : .mpeg4Movie]
@@ -230,9 +224,9 @@ struct ExportPanel: View {
         guard panel.runModal() == .OK, let outURL = panel.url else { return }
 
         let size = outputSize
-        working = true
-        progress = 0
-        status = "Encoding…"
+        state.exportWorking = true
+        state.exportProgress = 0
+        state.exportStatus = "Encoding…"
         // Suspend preview animation and playback for the duration: the
         // exporter drives the same Metal queue from its own loop and
         // librashader's Metal runtime is not thread-safe.
@@ -253,24 +247,25 @@ struct ExportPanel: View {
         let ntscJSON: String? = (state.ntscEnabled && state.ntscAvailable)
             ? state.ntscStage?.settingsJSON()
             : nil
+        let state = state
 
         Task {
             do {
                 try await exporter.export(source: vs, paramValues: params,
                                           settings: settings,
                                           ntscSettingsJSON: ntscJSON) { p in
-                    Task { @MainActor in self.progress = p }
+                    Task { @MainActor in state.exportProgress = p }
                 }
                 await MainActor.run {
-                    self.status = "Wrote \(outURL.lastPathComponent) (\(size.width) × \(size.height))"
-                    self.working = false
-                    self.progress = 1
+                    state.exportStatus = "Wrote \(outURL.lastPathComponent) (\(size.width) × \(size.height))"
+                    state.exportWorking = false
+                    state.exportProgress = 1
                     state.exportInProgress = false
                 }
             } catch {
                 await MainActor.run {
-                    self.status = "Export failed: \(error.localizedDescription)"
-                    self.working = false
+                    state.exportStatus = "Export failed: \(error.localizedDescription)"
+                    state.exportWorking = false
                     state.exportInProgress = false
                 }
             }
