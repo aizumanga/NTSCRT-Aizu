@@ -98,6 +98,10 @@ For iteration and headless/screenshot verification:
 - `CRT_GIF_SELFTEST=<out.gif>` — render a GIF headlessly and exit (image source → keyframed GIF, video source → decimated GIF). `CRT_GIF_W`, `CRT_GIF_FPS`, `CRT_GIF_SECONDS` override the defaults and `CRT_GIF_PLAIN=1` skips the keyframes; the run prints bytes-per-pixel-per-frame, which is how `GifExporter.estimatedBytes` was calibrated
 - `CRT_EXPORT_FORMAT=<GIF|H.264|…>` — preselect an export format at launch
 - `CRT_SNAP=1` — turn on "snap size to scanline grid" at launch
+- `CRT_NTSC_OFF=1` / `CRT_NTSC_SET="key=value,…"` — disable the VHS stage, or set individual ntsc-rs values, to bisect a rendering artifact
+- `CRT_INTEGER_OFF=1` / `CRT_COMPARE_OFF=1` — start with integer scale or compare off
+- `CRT_WINDOW_SIZE=WxH` — force the window size, so both letterbox parities can be reproduced deliberately
+- `CRT_SCALE_LOG=1` — log drawable/target sizes and letterbox parity on each size change
 - `CRT_TL_AUTOKEY_TEST=1` — assert the auto-key rules (edit on a keyframe rewrites it, edits between keyframes don't, scrubbing never mutates), print PASS/FAIL, exit
 - `CRT_COMPARE_X=<0…1>` — place the compare divider at launch (edge-case captures)
 - `CRT_FRONT=1` — activate the app at launch

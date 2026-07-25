@@ -115,7 +115,9 @@ struct ContentView: View {
                 || env["CRT_FRONT"] == "1" || env["CRT_DUMP_TOOLTIPS"] == "1"
                 || env["CRT_TL_AUTOKEY_TEST"] == "1"
                 || env["CRT_GIF_SELFTEST"] != nil
-                || env["CRT_EXPORT_FORMAT"] != nil else { return }
+                || env["CRT_EXPORT_FORMAT"] != nil || env["CRT_NTSC_SET"] != nil
+                || env["CRT_NTSC_OFF"] == "1" || env["CRT_INTEGER_OFF"] == "1"
+                || env["CRT_COMPARE_OFF"] == "1" || env["CRT_WINDOW_SIZE"] != nil else { return }
         var tries = 0
         while tries < 100 && !((state.sourceTexture != nil) && state.chain != nil) {
             try? await Task.sleep(for: .milliseconds(100))
@@ -125,6 +127,33 @@ struct ContentView: View {
             state.exportFormat = f
         }
         if env["CRT_SNAP"] == "1" { state.snapExportToScanlineGrid = true }
+        // CRT_NTSC_SET="key=value,key=value" / CRT_NTSC_OFF=1 — bisect the
+        // VHS stage headlessly when chasing a rendering artifact.
+        if let pairs = env["CRT_NTSC_SET"] {
+            for pair in pairs.split(separator: ",") {
+                let kv = pair.split(separator: "=", maxSplits: 1)
+                guard kv.count == 2 else { continue }
+                let key = String(kv[0]), raw = String(kv[1])
+                if raw == "true" || raw == "false" {
+                    state.setNtscValue(key, raw == "true")
+                } else if let d = Double(raw) {
+                    state.setNtscValue(key, raw.contains(".") ? d as Any : Int(d) as Any)
+                }
+            }
+        }
+        if env["CRT_NTSC_OFF"] == "1" { state.ntscEnabled = false }
+        if env["CRT_INTEGER_OFF"] == "1" { state.integerScale = false }
+        // CRT_WINDOW_SIZE="WxH" — drive the drawable size so both letterbox
+        // parities can be reproduced deliberately.
+        if let spec = env["CRT_WINDOW_SIZE"] {
+            let parts = spec.split(separator: "x").compactMap { Double($0) }
+            if parts.count == 2, let win = NSApp.windows.first {
+                var f = win.frame
+                f.size = NSSize(width: parts[0], height: parts[1])
+                win.setFrame(f, display: true)
+            }
+        }
+        if env["CRT_COMPARE_OFF"] == "1" { state.compareEnabled = false }
         if let cx = env["CRT_COMPARE_X"].flatMap(Float.init) {
             state.compareLineX = cx
         }

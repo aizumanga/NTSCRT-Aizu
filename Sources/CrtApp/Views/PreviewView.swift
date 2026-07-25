@@ -57,6 +57,9 @@ struct PreviewView: NSViewRepresentable {
         /// Safety cap on the offscreen render target's long edge (the target
         /// normally matches the drawable size).
         private static let maxTargetLongEdge = 4096
+        /// CRT_SCALE_LOG=1: report drawable/target sizes and letterbox parity.
+        private static let scaleLog = ProcessInfo.processInfo.environment["CRT_SCALE_LOG"] == "1"
+        private static var lastScaleLogKey = ""
 
         private weak var view: MTKView?
         private let state: AppState
@@ -317,8 +320,15 @@ struct PreviewView: NSViewRepresentable {
             float panX;
             float panY;
             int   useNearest;       // 1 when zoomed in (pixel inspection)
-            float fitX;             // target/drawable fraction (1 = fill)
-            float fitY;
+            // Letterbox in PIXELS, not fractions: the offset must be a whole
+            // number of pixels or nearest sampling lands on texel boundaries
+            // (see the Swift side).
+            float dstW;
+            float dstH;
+            float tgtW;
+            float tgtH;
+            float offX;
+            float offY;
         };
 
         fragment float4 bv_composite_fs(VOut in [[stage_in]],
@@ -329,10 +339,13 @@ struct PreviewView: NSViewRepresentable {
             constexpr sampler sampL(filter::linear, address::clamp_to_edge);
             constexpr sampler sampN(filter::nearest, address::clamp_to_edge);
 
-            // Letterbox (integer scale), then zoom + pan around the centre.
-            float2 uv = (in.uv - 0.5) / float2(u.fitX, u.fitY);
-            uv = uv / u.zoom;
-            uv = uv + 0.5 - float2(u.panX, u.panY);
+            // Map the fragment to a target pixel, then normalise. Doing the
+            // letterbox in pixel space with a whole-pixel offset keeps the
+            // sample on texel centres for any drawable size.
+            float2 px = float2(in.uv.x * u.dstW - u.offX,
+                               in.uv.y * u.dstH - u.offY);
+            float2 uv = float2(px.x / u.tgtW, px.y / u.tgtH);
+            uv = (uv - 0.5) / u.zoom + 0.5 - float2(u.panX, u.panY);
 
             // The compare line is drawn BEFORE the bounds check so it stays
             // visible over the letterbox bars — otherwise dragging it to
@@ -425,8 +438,12 @@ struct PreviewView: NSViewRepresentable {
             var panX: Float
             var panY: Float
             var useNearest: Int32
-            var fitX: Float
-            var fitY: Float
+            var dstW: Float
+            var dstH: Float
+            var tgtW: Float
+            var tgtH: Float
+            var offX: Float
+            var offY: Float
         }
 
         private func composite(primary: MTLTexture,
@@ -444,9 +461,28 @@ struct PreviewView: NSViewRepresentable {
             enc.setFragmentTexture(primary, index: 0)
             enc.setFragmentTexture(secondary, index: 1)
             // Integer scale letterboxes the (smaller) target at 1:1 in the
-            // drawable; otherwise the target fills it (they normally match).
-            let fitX = state.integerScale ? Float(primary.width) / Float(dst.width) : 1
-            let fitY = state.integerScale ? Float(primary.height) / Float(dst.height) : 1
+            // drawable; otherwise the target is stretched to fill it.
+            //
+            // The offset must be a WHOLE number of pixels. Centring on a half
+            // pixel (which happens whenever drawable − target is odd) puts
+            // every nearest-filtered sample exactly on a texel boundary, and
+            // float rounding then duplicates some rows and drops others —
+            // horizontal banding that appears and disappears as the window is
+            // resized. Measured on a 1280 target: an odd delta duplicates
+            // ~150 of 1280 rows, an even delta none.
+            if Self.scaleLog {
+                let dx = dst.width - primary.width, dy = dst.height - primary.height
+                let key = "\(dst.width)x\(dst.height)/\(primary.width)x\(primary.height)"
+                if key != Self.lastScaleLogKey {
+                    Self.lastScaleLogKey = key
+                    fputs("[scale] drawable \(dst.width)x\(dst.height) target \(primary.width)x\(primary.height) delta \(dx),\(dy) \(dx % 2 == 0 && dy % 2 == 0 ? "even" : "ODD")\n", stderr)
+                }
+            }
+            let stretch = !state.integerScale
+            let tgtW = Float(stretch ? dst.width : primary.width)
+            let tgtH = Float(stretch ? dst.height : primary.height)
+            let offX = stretch ? 0 : Float((dst.width - primary.width) / 2)
+            let offY = stretch ? 0 : Float((dst.height - primary.height) / 2)
             var u = CompositeU(
                 compareLineX: state.compareLineX,
                 compareEnabled: state.compareEnabled ? 1 : 0,
@@ -458,8 +494,12 @@ struct PreviewView: NSViewRepresentable {
                 // gives the smoother final-image resample. Integer scale is
                 // exact multiples, so nearest is always right there.
                 useNearest: (state.zoom > 1.001 || state.integerScale) ? 1 : 0,
-                fitX: min(1, fitX),
-                fitY: min(1, fitY)
+                dstW: Float(dst.width),
+                dstH: Float(dst.height),
+                tgtW: tgtW,
+                tgtH: tgtH,
+                offX: offX,
+                offY: offY
             )
             enc.setFragmentBytes(&u, length: MemoryLayout<CompositeU>.size, index: 0)
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 3)
