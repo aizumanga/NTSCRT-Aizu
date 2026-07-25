@@ -51,7 +51,18 @@ struct ExportPopover: View {
             h = longEdge
             w = max(64, Int((Double(longEdge) * Double(aspect)).rounded()))
         }
-        return (w & ~1, h & ~1)
+        return snapped(width: w & ~1, height: h & ~1)
+    }
+
+    /// With snapping on, round onto the scanline grid (see ScanlineGrid).
+    private func snapped(width: Int, height: Int) -> (width: Int, height: Int) {
+        guard state.snapExportToScanlineGrid else { return (width, height) }
+        let input = state.chainInputSize
+        guard input.width > 0, input.height > 0 else { return (width, height) }
+        let s = ScanlineGrid.snappedSize(inputWidth: input.width,
+                                         inputHeight: input.height,
+                                         targetHeight: height)
+        return (s.width & ~1, s.height & ~1)
     }
 
     var body: some View {
@@ -98,6 +109,11 @@ struct ExportPopover: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             }
+
+            Toggle("Snap size to scanline grid", isOn: $state.snapExportToScanlineGrid)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .tooltip("Round the output so every source line gets the same whole number of rows — the sizes where scanlines land perfectly even. Off, the exporter renders larger and averages down instead, which keeps your exact dimensions.")
 
             if state.exportFormat.isGIF {
                 gifControls
@@ -216,7 +232,7 @@ struct ExportPopover: View {
     private var gifSize: (width: Int, height: Int) {
         let w = max(64, state.gifWidth)
         let h = max(64, Int((Double(w) / Double(state.sourceAspect)).rounded()))
-        return (w & ~1, h & ~1)
+        return snapped(width: w & ~1, height: h & ~1)
     }
 
     private var gifFrameCount: Int {
@@ -260,12 +276,21 @@ struct ExportPopover: View {
                     ntsc: stage, frameCount: state.frameCounter)
                 spec = nil
             }
-            try state.pipeline.encode(into: cb,
-                                      chain: chain,
-                                      inputTexture: input,
-                                      outputTexture: target,
-                                      downscale: spec,
-                                      frameCount: state.frameCounter)
+            // Same scanline-banding guard the video/GIF paths use.
+            if let supersample = SupersampledPass.make(device: device,
+                                                       chainInput: state.chainInputSize,
+                                                       target: (size.width, size.height)) {
+                try supersample.encode(into: cb, pipeline: state.pipeline, chain: chain,
+                                       inputTexture: input, outputTexture: target,
+                                       downscale: spec, frameCount: state.frameCounter)
+            } else {
+                try state.pipeline.encode(into: cb,
+                                          chain: chain,
+                                          inputTexture: input,
+                                          outputTexture: target,
+                                          downscale: spec,
+                                          frameCount: state.frameCounter)
+            }
         } catch {
             state.exportStatus = "Render failed: \(error.localizedDescription)"
             state.exportWorking = false

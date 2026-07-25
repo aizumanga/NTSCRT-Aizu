@@ -180,6 +180,14 @@ public final class Mp4Exporter {
         let totalFrames = source.totalFrames
         var frameIndex = 0
 
+        // Guard against scanline banding at small output sizes (ScanlineGrid).
+        let chainInput = ScanlineGrid.chainInputSize(width: Int(source.pixelSize.width),
+                                                    height: Int(source.pixelSize.height),
+                                                    downscale: settings.downscale)
+        let supersample = SupersampledPass.make(device: context.device,
+                                                chainInput: chainInput,
+                                                target: (settings.outputWidth, settings.outputHeight))
+
         // Render target reused across frames (private).
         guard let target = makeRenderTarget(device: context.device,
                                             width: settings.outputWidth,
@@ -222,11 +230,17 @@ public final class Mp4Exporter {
                         ntsc: stage, frameCount: frameIndex + 1)
                     frameDownscale = nil
                 }
-                try self.pipeline.encode(into: cb, chain: chain,
-                                         inputTexture: frameInput,
-                                         outputTexture: target,
-                                         downscale: frameDownscale,
-                                         frameCount: frameIndex + 1)
+                if let supersample {
+                    try supersample.encode(into: cb, pipeline: self.pipeline, chain: chain,
+                                           inputTexture: frameInput, outputTexture: target,
+                                           downscale: frameDownscale, frameCount: frameIndex + 1)
+                } else {
+                    try self.pipeline.encode(into: cb, chain: chain,
+                                             inputTexture: frameInput,
+                                             outputTexture: target,
+                                             downscale: frameDownscale,
+                                             frameCount: frameIndex + 1)
+                }
 
                 var pb: CVPixelBuffer?
                 if let pool = adaptor.pixelBufferPool {
@@ -384,6 +398,14 @@ public final class Mp4Exporter {
             throw Error.encodeFailed("makeRenderTarget")
         }
 
+        // Small outputs would otherwise alias the shader's scanlines into
+        // bands (see ScanlineGrid); nil when the size is already fine.
+        let chainInput = ScanlineGrid.chainInputSize(width: source.width, height: source.height,
+                                                    downscale: settings.downscale)
+        let supersample = SupersampledPass.make(device: context.device,
+                                                chainInput: chainInput,
+                                                target: (settings.outputWidth, settings.outputHeight))
+
         var sharedCacheOpt: CVMetalTextureCache?
         CVMetalTextureCacheCreate(nil, nil, context.device, nil, &sharedCacheOpt)
         guard let sharedCache = sharedCacheOpt else {
@@ -416,11 +438,17 @@ public final class Mp4Exporter {
                         ntsc: stage, frameCount: frameIndex + 1)
                     frameDownscale = nil
                 }
-                try self.pipeline.encode(into: cb, chain: chain,
-                                         inputTexture: frameInput,
-                                         outputTexture: target,
-                                         downscale: frameDownscale,
-                                         frameCount: frameIndex + 1)
+                if let supersample {
+                    try supersample.encode(into: cb, pipeline: self.pipeline, chain: chain,
+                                           inputTexture: frameInput, outputTexture: target,
+                                           downscale: frameDownscale, frameCount: frameIndex + 1)
+                } else {
+                    try self.pipeline.encode(into: cb, chain: chain,
+                                             inputTexture: frameInput,
+                                             outputTexture: target,
+                                             downscale: frameDownscale,
+                                             frameCount: frameIndex + 1)
+                }
 
                 var pb: CVPixelBuffer?
                 if let pool = adaptor.pixelBufferPool {

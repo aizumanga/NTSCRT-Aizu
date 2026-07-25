@@ -124,6 +124,7 @@ struct ContentView: View {
         if let f = env["CRT_EXPORT_FORMAT"].flatMap(ExportFormat.init(rawValue:)) {
             state.exportFormat = f
         }
+        if env["CRT_SNAP"] == "1" { state.snapExportToScanlineGrid = true }
         if let cx = env["CRT_COMPARE_X"].flatMap(Float.init) {
             state.compareLineX = cx
         }
@@ -298,8 +299,9 @@ struct ContentView: View {
             print("GIF_SELFTEST \(w)x\(h) frames=\(frames) fps=\(state.gifFPS) bytes=\(bytes ?? 0) bytesPerPxPerFrame=\(String(format: "%.3f", bpf))")
             // Sanity-check the supersample rule across regimes.
             for (inH, tgtH) in [(240, 404), (416, 702), (240, 1080), (2160, 702), (1080, 540)] {
-                let k = GifExporter.supersampleFactor(inputHeight: inH, targetHeight: tgtH)
-                print("SS input=\(inH) target=\(tgtH) -> k=\(k) renderH=\(k*inH)")
+                let k = ScanlineGrid.supersampleFactor(inputHeight: inH, targetHeight: tgtH)
+                let snap = ScanlineGrid.snappedSize(inputWidth: inH * 4 / 3, inputHeight: inH, targetHeight: tgtH)
+                print("SS input=\(inH) target=\(tgtH) -> k=\(k) renderH=\(k*inH) | snapped=\(snap.width)x\(snap.height) rows/line=\(String(format: "%.2f", Double(snap.height)/Double(inH)))")
             }
             exit(0)
         } catch {

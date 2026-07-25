@@ -70,60 +70,20 @@ public final class GifExporter {
         Int(0.8 * Double(width * height * frames))
     }
 
-    /// CRT shaders draw their scanline/mask structure in *output* pixels, so
-    /// rendering straight into a small GIF frame asks the shader to fit one
-    /// source line into a fractional number of rows (e.g. 416 lines into 702
-    /// rows = 1.69). Some lines then land on two pixels and some on one, and
-    /// the phase drifts across the frame — which reads as horizontal bands
-    /// of scanlines. The preview never shows this because it renders large
-    /// and integer-scaled.
-    ///
-    /// Fix: render at a whole multiple of the chain input (so the pattern is
-    /// exactly periodic), at least 2× the requested height, then area-
-    /// downsample. Each output pixel then integrates the true scanline
-    /// profile instead of point-sampling an aliased one.
-    /// Returns the multiple of the chain input to render at (1 = render
-    /// straight to the target).
-    public static func supersampleFactor(inputHeight: Int, targetHeight: Int) -> Int {
-        guard inputHeight > 0, targetHeight > 0 else { return 1 }
-        let rowsPerLine = Double(targetHeight) / Double(inputHeight)
-        // At 3+ output rows per source line the scanlines are already well
-        // resolved; supersampling would only cost time.
-        guard rowsPerLine < 3 else { return 1 }
-
-        // Render 4 rows per source line — enough to resolve the scanline
-        // profile — using an even multiple (odd ones put the beam boundary
-        // exactly on a pixel edge in the glow shaders and reintroduce row
-        // jitter). Step down if that would be disproportionate: a big input
-        // with the downscale stage off (say 4K → a 540px GIF) is already
-        // minifying and must not be blown up to 8640 rows.
-        var k = 4
-        while k > 2 && (k * inputHeight > 4 * targetHeight || k * inputHeight > 4096) {
-            k -= 2
-        }
-        if k * inputHeight > 4 * targetHeight || k * inputHeight > 4096 { return 1 }
-        return k
-    }
-
-    /// What the shader actually sees: the downscale output when enabled,
-    /// otherwise the source itself.
     static func chainInputSize(source: MTLTexture, downscale: DownscaleSpec?) -> (width: Int, height: Int) {
-        chainInputSize(width: source.width, height: source.height, downscale: downscale)
+        ScanlineGrid.chainInputSize(width: source.width, height: source.height, downscale: downscale)
     }
 
     static func chainInputSize(width: Int, height: Int,
                                downscale: DownscaleSpec?) -> (width: Int, height: Int) {
-        if let d = downscale { return (d.width, d.height) }
-        return (width, height)
+        ScanlineGrid.chainInputSize(width: width, height: height, downscale: downscale)
     }
 
     private let context: MetalContext
     private let pipeline: Pipeline
-    private let downscaler: Downscaler?
     public init(context: MetalContext) {
         self.context = context
         self.pipeline = Pipeline(context: context)
-        self.downscaler = try? Downscaler(device: context.device)
     }
 
     // MARK: - still → animated GIF
@@ -213,9 +173,8 @@ public final class GifExporter {
         let chain: LRShaderChain
         let ntscStage: NtscStage?
         let target: MTLTexture
-        /// Oversized render target; nil when no supersampling is needed.
-        let superTarget: MTLTexture?
-        let downscaler: Downscaler?
+        /// Set when the requested size would alias the scanlines.
+        let supersample: SupersampledPass?
         let staging: MTLTexture
         let queue: MTLCommandQueue
         let settings: Settings
@@ -252,18 +211,10 @@ public final class GifExporter {
             self.staging = staging
 
             // Supersample when the shader would otherwise be squeezed into
-            // too few rows per source line (see supersampleFactor).
-            self.downscaler = exporter.downscaler
-            let k = GifExporter.supersampleFactor(inputHeight: chainInputSize.height,
-                                                  targetHeight: settings.height)
-            let ssW = chainInputSize.width * k
-            let ssH = chainInputSize.height * k
-            if exporter.downscaler != nil, ssH > settings.height, ssW > settings.width {
-                self.superTarget = makeRenderTarget(device: exporter.context.device,
-                                                    width: ssW, height: ssH)
-            } else {
-                self.superTarget = nil
-            }
+            // too few rows per source line (see ScanlineGrid).
+            self.supersample = SupersampledPass.make(device: exporter.context.device,
+                                                     chainInput: chainInputSize,
+                                                     target: (settings.width, settings.height))
 
             try? FileManager.default.removeItem(at: settings.outputURL)
             guard let dest = CGImageDestinationCreateWithURL(
@@ -299,12 +250,10 @@ public final class GifExporter {
             }
             // Render big and integrate down, so the scanline pattern isn't
             // aliased into bands at GIF sizes.
-            if let superTarget, let downscaler {
-                try pipeline.encode(into: cb, chain: chain,
-                                    inputTexture: input, outputTexture: superTarget,
-                                    downscale: downscale, frameCount: frameIndex)
-                downscaler.encode(into: cb, source: superTarget,
-                                  destination: target, method: .area)
+            if let supersample {
+                try supersample.encode(into: cb, pipeline: pipeline, chain: chain,
+                                       inputTexture: input, outputTexture: target,
+                                       downscale: downscale, frameCount: frameIndex)
             } else {
                 try pipeline.encode(into: cb, chain: chain,
                                     inputTexture: input, outputTexture: target,

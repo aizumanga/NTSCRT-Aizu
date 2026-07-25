@@ -185,6 +185,13 @@ final class AppState {
         return false
     }
 
+    /// Resolution the shader actually renders from.
+    var chainInputSize: (width: Int, height: Int) {
+        ScanlineGrid.chainInputSize(width: sourceTexture?.width ?? 0,
+                                    height: sourceTexture?.height ?? 0,
+                                    downscale: downscaleSpec)
+    }
+
     var timelineTotalFrames: Int {
         max(1, Int((timelineDuration * Double(timelineFPS)).rounded()))
     }
@@ -490,6 +497,11 @@ final class AppState {
     /// nothing will accept (a 1080px 5s 30fps GIF of VHS noise is ~30 MB).
     var gifWidth: Int = 480
     var gifFPS: Int = 12
+    /// Round the export size to a whole multiple of the chain input, so
+    /// every source line gets the same number of output rows (no scanline
+    /// banding). Off = keep the exact size asked for; the exporters then
+    /// supersample instead.
+    var snapExportToScanlineGrid: Bool = false
     var exportQuality: ExportQuality = .high
     var exportStatus: String = ""
     var exportProgress: Double = 0
