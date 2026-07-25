@@ -338,7 +338,7 @@ final class AppState {
     /// The app's house VHS look, overlaid on ntsc-rs library defaults —
     /// Finn's dialed-in settings (2026-07-18). Reset returns here.
     private static let appNtscDefaults: [String: Any] = [
-        "filter_type": 0,                       // Constant K (blurry)
+        "filter_type": 1,                       // Butterworth (sharper)
         "composite_preemphasis": 1.106,
         "composite_noise_intensity": 0.204,
         "composite_noise_frequency": 0.8576,
@@ -368,6 +368,10 @@ final class AppState {
         // in signal lines/pixels, and at 1080p+ inputs they're proportionally
         // tiny (and then further diluted by the downscale) without this.
         "scale_with_video_size": true,
+        // Below 1.0 the whole signal stage lands lighter — the house look
+        // was too aggressive out of the box.
+        "bandwidth_scale": 0.3,                 // Horizontal scale
+        "vertical_scale": 0.3,
     ]
 
     /// House shader tweaks per preset (vs the shaders' declared defaults).

@@ -133,10 +133,16 @@ struct ContentView: View {
             state.setKeyframeAtPlayhead()
             state.scrubTimeline(to: 0.8)
             state.setKeyframeAtPlayhead()
-            state.scrubTimeline(to: 0.45)
+            // Park the playhead exactly on the first key, as clicking its
+            // diamond does — makes playhead/diamond centring measurable.
+            state.scrubTimeline(to: state.timelineKeys[0].t)
         }
         if env["CRT_DUMP_TOOLTIPS"] == "1" {
             try? await Task.sleep(for: .milliseconds(800))
+            print("TOOLTIP-DELAY \(UserDefaults.standard.integer(forKey: "NSInitialToolTipDelay")) ms")
+            for k in ["filter_type", "bandwidth_scale", "vertical_scale"] {
+                print("NTSC-DEFAULT \(k) = \(state.ntscValues[k] ?? "unset")")
+            }
             func walk(_ v: NSView, _ depth: Int) {
                 if let t = v.toolTip {
                     // Does a click at this view's centre reach the control

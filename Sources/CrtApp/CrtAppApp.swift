@@ -6,6 +6,14 @@ import CrtCore
 @main
 struct CrtAppApp: App {
 
+    init() {
+        // macOS waits ~2 s before showing a tooltip — long enough that our
+        // icon-only controls read as having no help at all, because the
+        // pointer has usually moved on by then.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 900])
+    }
+
+
     @State private var bootstrapError: String?
     @State private var appState: AppState?
 

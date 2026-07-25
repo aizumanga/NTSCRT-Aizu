@@ -8,13 +8,13 @@ struct TimelineBar: View {
     @Environment(AppState.self) private var state
     @State private var selectedKey: UUID?
 
-    private let rulerHeight: CGFloat = 18
-    private let trackHeight: CGFloat = 30
-    private let chipRowHeight: CGFloat = 22
+    private let rulerHeight: CGFloat = 28
+    private let trackHeight: CGFloat = 92
+    private let chipRowHeight: CGFloat = 34
 
     var body: some View {
         @Bindable var state = state
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             controlsRow
             GeometryReader { geo in
                 track(width: max(1, geo.size.width))
@@ -22,7 +22,7 @@ struct TimelineBar: View {
             .frame(height: rulerHeight + trackHeight + chipRowHeight * CGFloat(chipRowCount))
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 14)
         .background(.bar)
     }
 
@@ -88,6 +88,7 @@ struct TimelineBar: View {
             .tooltip("Video duration. Keyframes are proportional — changing the duration stretches the whole animation.")
 
             Picker("", selection: $state.timelineFPS) {
+                Text("12 fps").tag(12)
                 Text("24 fps").tag(24)
                 Text("30 fps").tag(30)
                 Text("60 fps").tag(60)
@@ -95,6 +96,7 @@ struct TimelineBar: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
+            .tooltip("Frame rate for the exported video")
         }
     }
 
@@ -168,28 +170,34 @@ struct TimelineBar: View {
 
     private func playhead(width w: CGFloat) -> some View {
         let h = rulerHeight + trackHeight
+        let knob: CGFloat = 10
         return ZStack(alignment: .top) {
             Rectangle()
                 .fill(Color.red)
                 .frame(width: 2, height: h)
             Circle()
                 .fill(Color.red)
-                .frame(width: 8, height: 8)
-                .offset(y: -3)
+                .frame(width: knob, height: knob)
+                .offset(y: -4)
         }
-        .offset(x: CGFloat(state.playheadT) * w - 1)
+        // The knob makes this stack `knob` wide, so the offset has to back
+        // out half of that — otherwise the line lands right of the playhead
+        // time and looks off-centre against a keyframe diamond.
+        .frame(width: knob)
+        .offset(x: CGFloat(state.playheadT) * w - knob / 2)
         .allowsHitTesting(false)
     }
 
     private func diamond(for key: Keyframe, width: CGFloat, midY: CGFloat) -> some View {
         let isSelected = selectedKey == key.id
+        let hit: CGFloat = 30
         return Image(systemName: "diamond.fill")
-            .font(.system(size: isSelected ? 17 : 15))
+            .font(.system(size: isSelected ? 21 : 18))
             .foregroundStyle(isSelected ? Color.accentColor : Color.accentColor.opacity(0.85))
             .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
-            .frame(width: 26, height: trackHeight)      // generous hit target
+            .frame(width: hit, height: trackHeight)     // generous hit target
             .contentShape(Rectangle())
-            .offset(x: CGFloat(key.t) * width - 13, y: midY - trackHeight / 2)
+            .offset(x: CGFloat(key.t) * width - hit / 2, y: midY - trackHeight / 2)
             .gesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .named("timeline"))
                     .onChanged { v in

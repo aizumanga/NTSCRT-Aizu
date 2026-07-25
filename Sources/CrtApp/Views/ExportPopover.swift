@@ -77,20 +77,11 @@ struct ExportPopover: View {
                 Text(hasKeyframes ? "Video from this image (keyframe animation)"
                                   : "Video from this image (VHS motion)")
                     .font(.caption).bold()
-                HStack(spacing: 6) {
-                    Text("Duration").font(.caption)
-                    NumericField(value: $state.timelineDuration, range: 0.5...600, width: 44)
-                    Text("s").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("", selection: $state.timelineFPS) {
-                        Text("24 fps").tag(24)
-                        Text("30 fps").tag(30)
-                        Text("60 fps").tag(60)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                }
+                // Length and frame rate belong to the timeline — one source
+                // of truth, set where you can see the keyframes.
+                Text(String(format: "%.1f s at %d fps — set in the Timeline",
+                            state.timelineDuration, state.timelineFPS))
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             HStack {
