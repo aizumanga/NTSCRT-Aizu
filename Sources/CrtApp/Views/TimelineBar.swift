@@ -1,50 +1,91 @@
 import SwiftUI
 
 /// Keyframe timeline docked under the preview (image sources, timeline mode
-/// on): scrub the playhead, snapshot master keyframes with the stopwatch,
-/// drag diamonds to retime, right-click a diamond for easing / delete.
-/// Keyframe times are normalized, so the duration field rescales the whole
-/// animation proportionally.
+/// on): a time ruler, a track of master keyframes, and a visible easing
+/// dropdown under each one. Keyframe times are normalized, so the duration
+/// field rescales the whole animation proportionally.
 struct TimelineBar: View {
     @Environment(AppState.self) private var state
+    @State private var selectedKey: UUID?
+
+    private let rulerHeight: CGFloat = 18
+    private let trackHeight: CGFloat = 30
+    private let chipRowHeight: CGFloat = 22
 
     var body: some View {
         @Bindable var state = state
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
+            controlsRow
+            GeometryReader { geo in
+                track(width: max(1, geo.size.width))
+            }
+            .frame(height: rulerHeight + trackHeight + chipRowHeight * CGFloat(chipRowCount))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    // MARK: - controls
+
+    private var controlsRow: some View {
+        @Bindable var state = state
+        return HStack(spacing: 10) {
+            Text("TIMELINE")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .kerning(0.8)
+
             Button {
                 state.toggleTimelinePreview()
             } label: {
                 Image(systemName: state.timelinePlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 13))
-                    .frame(width: 18)
-                    .help(state.timelinePlaying ? "Pause"
-                          : "Preview the keyframe animation in the preview (loops)")
+                    .font(.system(size: 14))
+                    .frame(width: 20, height: 20)
             }
             .buttonStyle(.borderless)
             .disabled(state.exportInProgress || state.timelineKeys.isEmpty)
+            .tooltip(state.timelinePlaying ? "Pause"
+                     : "Preview the keyframe animation in the preview (loops)")
 
             Button {
                 state.setKeyframeAtPlayhead()
+                selectedKey = state.timelineKeys.first { abs($0.t - state.playheadT) < 0.005 }?.id
             } label: {
-                Image(systemName: "stopwatch")
-                    .font(.system(size: 13))
-                    .frame(width: 18)
-                    .help("Set a keyframe: snapshot every VHS + shader parameter at the playhead (updates the keyframe under the playhead). Nothing is keyed until you press this.")
+                Label("Keyframe", systemImage: "stopwatch")
+                    .font(.system(size: 11))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tooltip("Snapshot every VHS + shader parameter at the playhead as a keyframe (updates the keyframe under the playhead). Nothing is keyed until you press this.")
 
-            ruler
+            if let id = selectedKey, state.timelineKeys.contains(where: { $0.id == id }) {
+                Button {
+                    state.deleteKeyframe(id: id)
+                    selectedKey = nil
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tooltip("Delete the selected keyframe")
+            }
 
-            Text(String(format: "%.2fs", state.playheadT * state.timelineDuration))
+            Spacer()
+
+            Text(String(format: "%.2f s", state.playheadT * state.timelineDuration))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+
+            Divider().frame(height: 14)
 
             HStack(spacing: 4) {
-                NumericField(value: $state.timelineDuration, range: 0.5...600, width: 44)
+                Text("Duration").font(.caption).foregroundStyle(.secondary)
+                NumericField(value: $state.timelineDuration, range: 0.5...600, width: 46)
                 Text("s").font(.caption).foregroundStyle(.secondary)
             }
-            .help("Video duration. Keyframes are proportional — changing the duration stretches the whole animation.")
+            .tooltip("Video duration. Keyframes are proportional — changing the duration stretches the whole animation.")
 
             Picker("", selection: $state.timelineFPS) {
                 Text("24 fps").tag(24)
@@ -55,67 +96,109 @@ struct TimelineBar: View {
             .pickerStyle(.menu)
             .fixedSize()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
     }
 
-    private var ruler: some View {
-        GeometryReader { geo in
-            let w = max(1, geo.size.width)
-            ZStack(alignment: .leading) {
-                // track
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.primary.opacity(0.15))
-                    .frame(height: 4)
-                    .frame(maxHeight: .infinity, alignment: .center)
+    // MARK: - ruler + track
 
-                if state.timelineKeys.isEmpty {
-                    Text("Dial in a look, then press the stopwatch to keyframe it")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .allowsHitTesting(false)
-                }
+    private func track(width w: CGFloat) -> some View {
+        let trackMidY = rulerHeight + trackHeight / 2
 
-                ForEach(state.timelineKeys) { key in
-                    diamond(for: key, width: w)
-                }
+        return ZStack(alignment: .topLeading) {
+            // Scrub surface: ruler + track band only, so the easing menus
+            // below stay clickable.
+            Rectangle()
+                .fill(Color.primary.opacity(0.04))
+                .frame(height: rulerHeight + trackHeight)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { v in state.scrubTimeline(to: Double(v.location.x / w)) }
+                )
 
-                // playhead
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.red)
-                    .frame(width: 2)
-                    .offset(x: CGFloat(state.playheadT) * w - 1)
+            ticks(width: w)
+
+            // Track line
+            Capsule()
+                .fill(Color.primary.opacity(0.18))
+                .frame(width: w, height: 5)
+                .offset(y: trackMidY - 2.5)
+                .allowsHitTesting(false)
+
+            if state.timelineKeys.isEmpty {
+                Text("Dial in a look, then press Keyframe to set one")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: w, alignment: .center)
+                    .offset(y: trackMidY + 14)
                     .allowsHitTesting(false)
             }
-            .contentShape(Rectangle())
-            .coordinateSpace(name: "ruler")
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        state.scrubTimeline(to: Double(v.location.x / w))
-                    }
-            )
+
+            ForEach(Array(chipRows().enumerated()), id: \.element.key.id) { _, entry in
+                easingChip(for: entry.key, width: w, row: entry.row)
+            }
+
+            ForEach(state.timelineKeys) { key in
+                diamond(for: key, width: w, midY: trackMidY)
+            }
+
+            playhead(width: w)
         }
-        .frame(height: 22)
-        .frame(maxWidth: .infinity)
+        .coordinateSpace(name: "timeline")
     }
 
-    private func diamond(for key: Keyframe, width: CGFloat) -> some View {
-        Image(systemName: "diamond.fill")
-            .font(.system(size: 11))
-            .foregroundStyle(Color.accentColor)
-            .frame(width: 18, height: 22)          // fat hit target
+    private func ticks(width w: CGFloat) -> some View {
+        // One label per second while they fit; otherwise thin out.
+        let duration = state.timelineDuration
+        let step = max(1.0, (duration / max(1, Double(Int(w / 60)))).rounded(.up))
+        let marks = stride(from: 0.0, through: duration, by: step).map { $0 }
+        return ForEach(marks, id: \.self) { s in
+            let x = CGFloat(s / duration) * w
+            VStack(alignment: .leading, spacing: 1) {
+                Text(String(format: "%.0f", s))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(Color.primary.opacity(0.25))
+                    .frame(width: 1, height: 5)
+            }
+            .offset(x: min(max(x, 2), w - 12), y: 0)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func playhead(width w: CGFloat) -> some View {
+        let h = rulerHeight + trackHeight
+        return ZStack(alignment: .top) {
+            Rectangle()
+                .fill(Color.red)
+                .frame(width: 2, height: h)
+            Circle()
+                .fill(Color.red)
+                .frame(width: 8, height: 8)
+                .offset(y: -3)
+        }
+        .offset(x: CGFloat(state.playheadT) * w - 1)
+        .allowsHitTesting(false)
+    }
+
+    private func diamond(for key: Keyframe, width: CGFloat, midY: CGFloat) -> some View {
+        let isSelected = selectedKey == key.id
+        return Image(systemName: "diamond.fill")
+            .font(.system(size: isSelected ? 17 : 15))
+            .foregroundStyle(isSelected ? Color.accentColor : Color.accentColor.opacity(0.85))
+            .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
+            .frame(width: 26, height: trackHeight)      // generous hit target
             .contentShape(Rectangle())
-            .offset(x: CGFloat(key.t) * width - 9)
+            .offset(x: CGFloat(key.t) * width - 13, y: midY - trackHeight / 2)
             .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .named("ruler"))
+                DragGesture(minimumDistance: 2, coordinateSpace: .named("timeline"))
                     .onChanged { v in
+                        selectedKey = key.id
                         state.moveKeyframe(id: key.id, to: Double(v.location.x / width))
                     }
             )
             .onTapGesture {
+                selectedKey = key.id
                 state.scrubTimeline(to: key.t)
             }
             .contextMenu {
@@ -123,15 +206,61 @@ struct TimelineBar: View {
                     get: { key.easing },
                     set: { state.setKeyframeEasing(id: key.id, $0) }
                 )) {
-                    ForEach(KeyEasing.allCases, id: \.self) { e in
-                        Text(e.rawValue).tag(e)
-                    }
+                    ForEach(KeyEasing.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 Divider()
                 Button("Delete Keyframe", role: .destructive) {
                     state.deleteKeyframe(id: key.id)
+                    if selectedKey == key.id { selectedKey = nil }
                 }
             }
-            .help("Keyframe at \(String(format: "%.2fs", key.t * state.timelineDuration)) — drag to move, right-click for interpolation")
+            .tooltip("Keyframe at \(String(format: "%.2fs", key.t * state.timelineDuration)) — drag to move, click to jump here")
+    }
+
+    /// Easing dropdown under each keyframe. Chips stagger onto a second row
+    /// when neighbours are too close to sit side by side.
+    private func easingChip(for key: Keyframe, width: CGFloat, row: Int) -> some View {
+        let y = rulerHeight + trackHeight + CGFloat(row) * chipRowHeight
+        return Menu {
+            ForEach(KeyEasing.allCases, id: \.self) { e in
+                Button {
+                    state.setKeyframeEasing(id: key.id, e)
+                } label: {
+                    if e == key.easing { Label(e.rawValue, systemImage: "checkmark") }
+                    else { Text(e.rawValue) }
+                }
+            }
+        } label: {
+            Text(key.easing.rawValue)
+                .font(.system(size: 10))
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .fixedSize()
+        .offset(x: max(0, min(CGFloat(key.t) * width - 30, width - 76)), y: y)
+        .tooltip("Interpolation leaving this keyframe")
+    }
+
+    /// Chip rows actually in use — the bar only grows a second row when
+    /// keyframes sit too close for their dropdowns to fit side by side.
+    private var chipRowCount: Int {
+        let rows = chipRows()
+        guard !rows.isEmpty else { return 1 }
+        return (rows.map(\.row).max() ?? 0) + 1
+    }
+
+    /// Assign each keyframe's chip to row 0 or 1 so overlapping chips don't
+    /// pile up on tightly spaced keys.
+    private func chipRows() -> [(key: Keyframe, row: Int)] {
+        var out: [(Keyframe, Int)] = []
+        var lastRowT: [Double] = [-1, -1]
+        let minGap = 0.16          // normalized width a chip occupies
+        for key in state.timelineKeys.sorted(by: { $0.t < $1.t }) {
+            let row = (key.t - lastRowT[0]) >= minGap ? 0 : 1
+            lastRowT[row] = key.t
+            out.append((key, row))
+        }
+        return out.map { (key: $0.0, row: $0.1) }
     }
 }

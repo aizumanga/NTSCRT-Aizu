@@ -334,6 +334,17 @@ struct PreviewView: NSViewRepresentable {
             uv = uv / u.zoom;
             uv = uv + 0.5 - float2(u.panX, u.panY);
 
+            // The compare line is drawn BEFORE the bounds check so it stays
+            // visible over the letterbox bars — otherwise dragging it to
+            // either edge (integer scale letterboxes by default) culls it
+            // and the divider appears to vanish.
+            if (u.compareEnabled != 0) {
+                float lineWidth = max(fwidth(in.uv.x) * 1.0, 0.0008);
+                if (abs(in.uv.x - u.compareLineX) < lineWidth) {
+                    return float4(1.0, 1.0, 1.0, 1.0);
+                }
+            }
+
             // Out-of-bounds → background.
             if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
                 return float4(0.05, 0.05, 0.06, 1.0);
@@ -347,11 +358,6 @@ struct PreviewView: NSViewRepresentable {
             float4 colour;
             if (u.compareEnabled != 0) {
                 colour = (in.uv.x < u.compareLineX) ? a : b;
-                // 1 px line in screen space (approximate using uv-derivatives).
-                float lineWidth = max(fwidth(in.uv.x) * 1.0, 0.0008);
-                if (abs(in.uv.x - u.compareLineX) < lineWidth) {
-                    colour = float4(1.0, 1.0, 1.0, 1.0);
-                }
             } else {
                 colour = a;
             }

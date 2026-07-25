@@ -95,6 +95,12 @@ For iteration and headless/screenshot verification:
 - `CRT_TIMELINE=1` — open the keyframe timeline at launch (image sources)
 - `CRT_TL_DEMO=1` — open the timeline and drop two demo keyframes on it
 - `CRT_TL_SELFTEST=<out.mp4>` — headless end-to-end check of the keyframe export: builds a two-key animation, renders it to `<out.mp4>`, exits
+- `CRT_COMPARE_X=<0…1>` — place the compare divider at launch (edge-case captures)
+- `CRT_FRONT=1` — activate the app at launch
+- `CRT_DUMP_TOOLTIPS=1` — print every NSView carrying tooltip text, plus what a click at its centre hits, then exit
+- `CRT_HOVER_LOG=1` — log preview hover events and the palette's measured frame
+
+**Verifying hover/tooltip behaviour:** `CGWarpMouseCursorPosition` moves the cursor *without* posting events, so it cannot drive SwiftUI's `.onHover`/`.onContinuousHover` (AppKit's tooltip manager polls the cursor, so tooltips *do* appear that way — an easy false positive). Real synthetic movement needs `CGEventPost`, which needs Accessibility. Use `CRT_DUMP_TOOLTIPS`/`CRT_HOVER_LOG` for ground truth instead of screenshots.
 
 ## Releasing (signed + notarized DMG)
 

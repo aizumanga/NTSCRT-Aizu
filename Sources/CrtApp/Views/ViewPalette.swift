@@ -26,7 +26,7 @@ struct ViewPalette: View {
             Slider(value: $state.zoom, in: 1.0...12.0)
                 .controlSize(.small)
                 .frame(width: 100)
-                .help("Zoom the preview (also ⌥-scroll). Hold Space to pan when zoomed.")
+                .tooltip("Zoom the preview (also ⌥-scroll). Hold Space to pan when zoomed.")
             Text("\(Int((state.zoom * 100).rounded()))%")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -36,10 +36,10 @@ struct ViewPalette: View {
                 state.resetView()
             } label: {
                 Image(systemName: "arrow.counterclockwise")
-                    .help("Reset zoom and pan")
             }
             .buttonStyle(.borderless)
             .disabled(state.zoom == 1.0 && state.panX == 0 && state.panY == 0)
+            .tooltip("Reset zoom and pan")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -64,10 +64,8 @@ struct ViewPalette: View {
                     isOn.wrappedValue ? Color.white.opacity(0.85) : Color.white.opacity(0.07),
                     in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(RoundedRectangle(cornerRadius: 6))
-                // .help on the label, not the plain-styled Button — tooltips
-                // don't reliably fire when attached outside .buttonStyle(.plain).
-                .help(help)
         }
         .buttonStyle(.plain)
+        .tooltip(help)
     }
 }

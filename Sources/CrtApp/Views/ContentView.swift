@@ -13,6 +13,8 @@ struct ContentView: View {
         ProcessInfo.processInfo.environment["CRT_PALETTE_FADE"].flatMap(Double.init) ?? 2.0
     @State private var paletteVisible = true
     @State private var palettePinned = false   // pointer is over the palette itself
+    @State private var paletteRect: CGRect = .zero
+    private let hoverLog = ProcessInfo.processInfo.environment["CRT_HOVER_LOG"] == "1"
     /// Fade bookkeeping lives in a plain class so per-mouse-move updates
     /// don't invalidate the view body.
     @State private var fade = FadeTimer()
@@ -47,22 +49,44 @@ struct ContentView: View {
                         // both system modes; its colors assume dark.
                         .environment(\.colorScheme, .dark)
                         .padding(.bottom, 12)
+                        .background(
+                            GeometryReader { g in
+                                Color.clear.preference(key: PaletteFrameKey.self,
+                                                       value: g.frame(in: .named("previewArea")))
+                            }
+                        )
                         .opacity(paletteVisible || palettePinned ? 1 : 0)
                         .animation(.easeInOut(duration: 0.25),
                                    value: paletteVisible || palettePinned)
                         .onHover { palettePinned = $0 }
                 }
-                .onContinuousHover { phase in
+                .coordinateSpace(name: "previewArea")
+                .onPreferenceChange(PaletteFrameKey.self) { r in
+                    paletteRect = r
+                    if hoverLog { print("PALETTE-RECT \(r.integral)") }
+                }
+                .onContinuousHover(coordinateSpace: .named("previewArea")) { phase in
                     switch phase {
-                    case .active:
+                    case .active(let p):
                         fade.hasHovered = true
                         paletteVisible = true
                         fade.task?.cancel()
+                        // Never fade while the pointer rests on the palette:
+                        // tooltips need ~2s of stillness, and hover events
+                        // stop firing exactly then — so the fade must be
+                        // decided by where the pointer *is*, not by whether
+                        // it keeps moving.
+                        let onPalette = paletteRect.insetBy(dx: -10, dy: -10).contains(p)
+                        if hoverLog {
+                            print("HOVER active p=\(Int(p.x)),\(Int(p.y)) paletteRect=\(paletteRect.integral) onPalette=\(onPalette)")
+                        }
+                        guard !onPalette else { return }
                         fade.task = Task { @MainActor in
                             try? await Task.sleep(for: .seconds(paletteFadeSeconds))
                             if !Task.isCancelled { paletteVisible = false }
                         }
                     case .ended:
+                        if hoverLog { print("HOVER ended") }
                         fade.task?.cancel()
                         if fade.hasHovered { paletteVisible = false }
                     }
@@ -87,12 +111,22 @@ struct ContentView: View {
     private func runDevHooks() async {
         let env = ProcessInfo.processInfo.environment
         guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
-                || env["CRT_TL_SELFTEST"] != nil else { return }
+                || env["CRT_TL_SELFTEST"] != nil || env["CRT_COMPARE_X"] != nil
+                || env["CRT_FRONT"] == "1" || env["CRT_DUMP_TOOLTIPS"] == "1" else { return }
         var tries = 0
         while tries < 100 && !(state.isImageSource && state.chain != nil) {
             try? await Task.sleep(for: .milliseconds(100))
             tries += 1
         }
+        if let cx = env["CRT_COMPARE_X"].flatMap(Float.init) {
+            state.compareLineX = cx
+        }
+        if env["CRT_FRONT"] == "1" {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        }
+        guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
+                || env["CRT_TL_SELFTEST"] != nil else { return }
         state.timelineEnabled = true
         if env["CRT_TL_DEMO"] == "1" {
             state.scrubTimeline(to: 0.2)
@@ -100,6 +134,27 @@ struct ContentView: View {
             state.scrubTimeline(to: 0.8)
             state.setKeyframeAtPlayhead()
             state.scrubTimeline(to: 0.45)
+        }
+        if env["CRT_DUMP_TOOLTIPS"] == "1" {
+            try? await Task.sleep(for: .milliseconds(800))
+            func walk(_ v: NSView, _ depth: Int) {
+                if let t = v.toolTip {
+                    // Does a click at this view's centre reach the control
+                    // underneath, or does the tooltip overlay swallow it?
+                    var hitClass = "?"
+                    if let cv = v.window?.contentView {
+                        let centre = v.convert(NSPoint(x: v.bounds.midX, y: v.bounds.midY), to: cv)
+                        hitClass = cv.hitTest(centre).map { "\(type(of: $0))" } ?? "nil"
+                    }
+                    print("TOOLTIP [\(type(of: v))] frame=\(v.frame.integral) hitTestAtCentre=\(hitClass) :: \(t.prefix(40))")
+                }
+                for sub in v.subviews { walk(sub, depth + 1) }
+            }
+            for w in NSApp.windows {
+                if let cv = w.contentView { walk(cv, 0) }
+            }
+            print("TOOLTIP-DUMP-END")
+            exit(0)
         }
         guard let out = env["CRT_TL_SELFTEST"] else { return }
         await runTimelineSelfTest(out: URL(fileURLWithPath: out))
@@ -254,6 +309,16 @@ struct ContentView: View {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
+    }
+}
+
+/// Palette bounds in the preview area's coordinate space, so the idle fade
+/// can tell whether the pointer is resting on the palette.
+private struct PaletteFrameKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 
