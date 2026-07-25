@@ -36,10 +36,10 @@ struct ViewPalette: View {
                 state.resetView()
             } label: {
                 Image(systemName: "arrow.counterclockwise")
+                    .help("Reset zoom and pan")
             }
             .buttonStyle(.borderless)
             .disabled(state.zoom == 1.0 && state.panX == 0 && state.panY == 0)
-            .help("Reset zoom and pan")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -64,8 +64,10 @@ struct ViewPalette: View {
                     isOn.wrappedValue ? Color.white.opacity(0.85) : Color.white.opacity(0.07),
                     in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(RoundedRectangle(cornerRadius: 6))
+                // .help on the label, not the plain-styled Button — tooltips
+                // don't reliably fire when attached outside .buttonStyle(.plain).
+                .help(help)
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 }

@@ -92,6 +92,9 @@ For iteration and headless/screenshot verification:
 - `CRT_FORCE_MANAGED=1` — use `.managed` CPU-readback textures (the discrete-GPU path) even on unified memory
 - `CRT_PALETTE_FADE=<seconds>` — override the floating view palette's 2 s idle fade
 - `CRT_SHOW_EXPORT=1` — open the Export popover at launch
+- `CRT_TIMELINE=1` — open the keyframe timeline at launch (image sources)
+- `CRT_TL_DEMO=1` — open the timeline and drop two demo keyframes on it
+- `CRT_TL_SELFTEST=<out.mp4>` — headless end-to-end check of the keyframe export: builds a two-key animation, renders it to `<out.mp4>`, exits
 
 ## Releasing (signed + notarized DMG)
 

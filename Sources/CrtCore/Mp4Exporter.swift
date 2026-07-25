@@ -306,4 +306,168 @@ public final class Mp4Exporter {
         }
         progress(1.0)
     }
+
+    /// Render a still image into a video: `totalFrames` frames at `fps`,
+    /// each run through the full pipeline with an advancing frame counter
+    /// (so frame-seeded VHS noise, jitter, and interlacing animate).
+    ///
+    /// `frameParams`, if given, is called per frame with (frameIndex,
+    /// totalFrames) and may return new shader params and/or ntsc settings
+    /// JSON to apply for that frame — the keyframe-animation hook. It runs
+    /// on the export thread and must be self-contained.
+    public func exportStill(source: MTLTexture,
+                            totalFrames: Int,
+                            fps: Int,
+                            paramValues: [String: Float],
+                            settings: Settings,
+                            ntscSettingsJSON: String? = nil,
+                            frameParams: (@Sendable (Int, Int) -> (shader: [String: Float]?, ntscJSON: String?))? = nil,
+                            progress: @escaping @Sendable (Double) -> Void) async throws {
+
+        var ntscStage: NtscStage? = nil
+        if let json = ntscSettingsJSON {
+            guard let stage = NtscStage() else {
+                throw Error.encodeFailed("ntsc-rs stage unavailable (dylib not loaded)")
+            }
+            try stage.setSettingsJSON(json)
+            ntscStage = stage
+        }
+
+        let chain = try LRShaderChain(presetPath: settings.presetPath,
+                                      commandQueue: context.queue)
+        for (n, v) in paramValues { try? chain.setParameter(n, value: v) }
+
+        try? FileManager.default.removeItem(at: settings.outputURL)
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: settings.outputURL,
+                                       fileType: settings.codec.avFileType)
+        } catch {
+            throw Error.writerInit("\(error)")
+        }
+
+        var videoSettings: [String: Any] = [
+            AVVideoCodecKey: settings.codec.avCodec,
+            AVVideoWidthKey: settings.outputWidth,
+            AVVideoHeightKey: settings.outputHeight,
+        ]
+        if !settings.codec.isProRes {
+            let bitrate = settings.averageBitrate
+                ?? max(2_000_000, settings.outputWidth * settings.outputHeight * 4)
+            videoSettings[AVVideoCompressionPropertiesKey] = [
+                AVVideoAverageBitRateKey: bitrate,
+            ]
+        }
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        videoInput.expectsMediaDataInRealTime = false
+        let pbAttrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: settings.outputWidth,
+            kCVPixelBufferHeightKey as String: settings.outputHeight,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ]
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: pbAttrs
+        )
+        guard writer.canAdd(videoInput) else { throw Error.writerInit("cannot add video input") }
+        writer.add(videoInput)
+
+        guard writer.startWriting() else {
+            throw Error.writerInit("startWriting: \(writer.error?.localizedDescription ?? "?")")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        guard let target = makeRenderTarget(device: context.device,
+                                            width: settings.outputWidth,
+                                            height: settings.outputHeight) else {
+            throw Error.encodeFailed("makeRenderTarget")
+        }
+
+        var sharedCacheOpt: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(nil, nil, context.device, nil, &sharedCacheOpt)
+        guard let sharedCache = sharedCacheOpt else {
+            throw Error.encodeFailed("CVMetalTextureCacheCreate")
+        }
+
+        try await Task.detached { () throws -> Void in
+            for frameIndex in 0..<totalFrames {
+                while !videoInput.isReadyForMoreMediaData {
+                    Thread.sleep(forTimeInterval: 0.005)
+                }
+
+                if let perFrame = frameParams?(frameIndex, totalFrames) {
+                    if let shader = perFrame.shader {
+                        for (n, v) in shader { try? chain.setParameter(n, value: v) }
+                    }
+                    if let json = perFrame.ntscJSON, let stage = ntscStage {
+                        try stage.setSettingsJSON(json)
+                    }
+                }
+
+                guard let cb = self.context.queue.makeCommandBuffer() else {
+                    throw Error.encodeFailed("commandBuffer")
+                }
+                var frameInput = source
+                var frameDownscale = settings.downscale
+                if let stage = ntscStage {
+                    frameInput = try self.pipeline.prepareChainInput(
+                        source: source, downscale: frameDownscale,
+                        ntsc: stage, frameCount: frameIndex + 1)
+                    frameDownscale = nil
+                }
+                try self.pipeline.encode(into: cb, chain: chain,
+                                         inputTexture: frameInput,
+                                         outputTexture: target,
+                                         downscale: frameDownscale,
+                                         frameCount: frameIndex + 1)
+
+                var pb: CVPixelBuffer?
+                if let pool = adaptor.pixelBufferPool {
+                    CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pb)
+                }
+                guard let pb else {
+                    throw Error.encodeFailed("pixel buffer pool")
+                }
+
+                var cvtex: CVMetalTexture?
+                let rc = CVMetalTextureCacheCreateTextureFromImage(
+                    nil, sharedCache, pb, nil,
+                    .bgra8Unorm,
+                    CVPixelBufferGetWidth(pb), CVPixelBufferGetHeight(pb),
+                    0, &cvtex
+                )
+                guard rc == kCVReturnSuccess, let cvtex,
+                      let pbTex = CVMetalTextureGetTexture(cvtex),
+                      let blit = cb.makeBlitCommandEncoder() else {
+                    throw Error.encodeFailed("cv tex / blit")
+                }
+                blit.copy(from: target,
+                          sourceSlice: 0, sourceLevel: 0,
+                          sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                          sourceSize: MTLSize(width: settings.outputWidth,
+                                              height: settings.outputHeight, depth: 1),
+                          to: pbTex,
+                          destinationSlice: 0, destinationLevel: 0,
+                          destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+                blit.endEncoding()
+                cb.commit()
+                cb.waitUntilCompleted()
+
+                let time = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(fps))
+                if !adaptor.append(pb, withPresentationTime: time) {
+                    throw Error.encodeFailed("adaptor.append: \(writer.error?.localizedDescription ?? "?")")
+                }
+                CVMetalTextureCacheFlush(sharedCache, 0)
+                progress(min(1.0, Double(frameIndex + 1) / Double(totalFrames)))
+            }
+            videoInput.markAsFinished()
+        }.value
+
+        await writer.finishWriting()
+        if writer.status == .failed {
+            throw Error.encodeFailed(writer.error?.localizedDescription ?? "writer failed")
+        }
+        progress(1.0)
+    }
 }

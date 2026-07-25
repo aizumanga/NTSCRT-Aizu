@@ -68,12 +68,90 @@ struct ContentView: View {
                     }
                 }
 
+                if state.timelineEnabled && state.isImageSource {
+                    TimelineBar()
+                }
                 TransportBar()
             }
             .frame(minWidth: 480, minHeight: 360)
         }
         .frame(minWidth: 1000, minHeight: 640)
         .toolbar { toolbarContent }
+        .task { await runDevHooks() }
+    }
+
+    /// CRT_TIMELINE=1 opens the timeline at launch; CRT_TL_DEMO=1 also drops
+    /// two keyframes on it; CRT_TL_SELFTEST=<out> builds a two-key animation
+    /// programmatically, renders it, and exits — headless end-to-end
+    /// verification of the keyframe export path.
+    private func runDevHooks() async {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
+                || env["CRT_TL_SELFTEST"] != nil else { return }
+        var tries = 0
+        while tries < 100 && !(state.isImageSource && state.chain != nil) {
+            try? await Task.sleep(for: .milliseconds(100))
+            tries += 1
+        }
+        state.timelineEnabled = true
+        if env["CRT_TL_DEMO"] == "1" {
+            state.scrubTimeline(to: 0.2)
+            state.setKeyframeAtPlayhead()
+            state.scrubTimeline(to: 0.8)
+            state.setKeyframeAtPlayhead()
+            state.scrubTimeline(to: 0.45)
+        }
+        guard let out = env["CRT_TL_SELFTEST"] else { return }
+        await runTimelineSelfTest(out: URL(fileURLWithPath: out))
+    }
+
+    private func runTimelineSelfTest(out: URL) async {
+        guard let source = state.sourceTexture, state.chain != nil else {
+            print("TL_SELFTEST: no image source/chain"); exit(1)
+        }
+        state.timelineDuration = 2
+        state.timelineFPS = 24
+
+        // Key B at t=1: the current (house-default) look.
+        state.scrubTimeline(to: 1)
+        state.setKeyframeAtPlayhead()
+        // Key A at t=0: every shader param at its minimum — a look far from
+        // the defaults, so first and last frames must differ visibly.
+        state.scrubTimeline(to: 0)
+        var floored: [String: Float] = [:]
+        for p in state.paramDescriptors { floored[p.name] = p.minimum }
+        state.setAllParams(floored)
+        state.setKeyframeAtPlayhead()
+        state.setKeyframeEasing(id: state.timelineKeys[0].id, .easeInOut)
+
+        guard let ev = state.makeTimelineEvaluator() else {
+            print("TL_SELFTEST: no evaluator"); exit(1)
+        }
+        let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
+        let settings = Mp4Exporter.Settings(
+            outputURL: out, outputWidth: 960, outputHeight: 720,
+            downscale: state.downscaleSpec, presetPath: preset.path,
+            codec: .h264, averageBitrate: 8_000_000)
+        let ntscJSON: String? = (state.ntscEnabled && state.ntscAvailable)
+            ? state.ntscStage?.settingsJSON() : nil
+        let total = state.timelineTotalFrames
+        let fps = state.timelineFPS
+        do {
+            try await Mp4Exporter(context: state.context).exportStill(
+                source: source, totalFrames: total, fps: fps,
+                paramValues: state.paramValues, settings: settings,
+                ntscSettingsJSON: ntscJSON,
+                frameParams: { i, n in
+                    let t = n > 1 ? Double(i) / Double(n - 1) : 0
+                    return (shader: ev.shaderParams(at: t), ntscJSON: ev.ntscJSON(at: t))
+                },
+                progress: { _ in })
+            print("TL_SELFTEST wrote \(out.path) frames=\(total) fps=\(fps)")
+            exit(0)
+        } catch {
+            print("TL_SELFTEST failed: \(error)")
+            exit(1)
+        }
     }
 
     @ToolbarContentBuilder
@@ -89,6 +167,17 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            Toggle(isOn: Binding(
+                get: { state.timelineEnabled },
+                set: { state.timelineEnabled = $0 }
+            )) {
+                Label("Timeline", systemImage: "timeline.selection")
+                    .labelStyle(.titleAndIcon)
+            }
+            .toggleStyle(.button)
+            .disabled(!state.isImageSource)
+            .help("Keyframe-animate the VHS and shader parameters over time and export the result as video (image sources)")
+
             Menu {
                 Button("Save Preset…") { savePreset() }
                 Button("Load Preset…") { loadPreset() }

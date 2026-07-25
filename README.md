@@ -24,6 +24,8 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 
 **Preview** — the floating palette holds the display controls. **Compare** (split-square) divides the preview: full pipeline on the left of the line, untouched original on the right — drag the line to move the split. **Integer scale** (grid) locks the image to whole-pixel multiples for perfectly uniform scanlines. **Animate** (sparkles) runs the preview continuously so tape noise, jitter, and interlacing actually move — leave it on for the real experience. Zoom with the slider (or ⌥-scroll), hold Space to pan when zoomed. The palette fades out when the mouse goes idle; move the mouse to bring it back. Videos get a transport bar docked under the preview — play/pause plus a full-width, frame-accurate scrubber, with all effects applied during playback.
 
+**Timeline** — with an image loaded, toggle **Timeline** in the toolbar to keyframe-animate the entire effect chain and render it as video: scrub the playhead, dial in a look, press the stopwatch to keyframe it, move the playhead, dial in another look, keyframe again. Everything keys together as one master keyframe — parameters you don't change between keys hold still automatically. Drag a diamond to retime it; right-click for interpolation (linear, ease in, ease out, ease in-out, hold) or to delete. Keyframe times are proportional, so changing the duration stretches the whole animation. Image sources can export video even without keyframes — tape noise, jitter, and interlacing animate on their own ("VHS motion").
+
 **Sidebar** — the creative pipeline, top to bottom in signal order:
 
 - **Source** — the loaded file (drag & drop onto the panel works too).

@@ -163,6 +163,126 @@ final class AppState {
         panY = 0
     }
 
+    // MARK: - timeline (keyframe animation, image sources → video)
+
+    /// Timeline mode: animate parameters over time from a still image and
+    /// render the result as a video. Image sources only.
+    var timelineEnabled: Bool = false {
+        didSet { if !timelineEnabled { stopTimelinePreview() } }
+    }
+    var timelineKeys: [Keyframe] = []
+    /// Output length in seconds. Keyframe times are normalized (0…1), so
+    /// changing the duration stretches the whole animation proportionally.
+    var timelineDuration: Double = 5.0
+    var timelineFPS: Int = 30
+    /// Playhead position, normalized 0…1.
+    private(set) var playheadT: Double = 0
+    private(set) var timelinePlaying = false
+    private var timelinePreviewTask: Task<Void, Never>?
+
+    var isImageSource: Bool {
+        if case .image = sourceKind { return true }
+        return false
+    }
+
+    var timelineTotalFrames: Int {
+        max(1, Int((timelineDuration * Double(timelineFPS)).rounded()))
+    }
+
+    /// Value-captured evaluator for scrubbing and export. nil when there are
+    /// no keyframes.
+    func makeTimelineEvaluator() -> TimelineEvaluator? {
+        var meta: [String: TimelineEvaluator.ShaderMeta] = [:]
+        for p in paramDescriptors {
+            meta[p.name] = .init(minimum: p.minimum, maximum: p.maximum, step: p.step)
+        }
+        var interp: [String: TimelineEvaluator.NtscInterp] = [:]
+        func walk(_ settings: [NtscSetting]) {
+            for s in settings {
+                switch s.kind {
+                case .boolean, .enumeration: interp[s.name] = .hold
+                case .int:                   interp[s.name] = .lerpInt
+                case .percentage, .float:    interp[s.name] = .lerp
+                case .group(let children):   walk(children)
+                }
+            }
+        }
+        walk(ntscDescriptors)
+        return TimelineEvaluator(keys: timelineKeys, shaderMeta: meta, ntscInterp: interp)
+    }
+
+    /// Snapshot the current whole state into a keyframe at the playhead.
+    /// Replaces an existing key sitting (nearly) on the playhead — that's
+    /// the only way values are ever keyed; scrubbing and slider edits never
+    /// auto-key.
+    func setKeyframeAtPlayhead() {
+        let snapshot = Keyframe(t: playheadT,
+                                shaderParams: paramValues,
+                                ntscValues: ntscValues)
+        if let i = timelineKeys.firstIndex(where: { abs($0.t - playheadT) < 0.005 }) {
+            var k = timelineKeys[i]
+            k.shaderParams = snapshot.shaderParams
+            k.ntscValues = snapshot.ntscValues
+            timelineKeys[i] = k
+        } else {
+            timelineKeys.append(snapshot)
+            timelineKeys.sort { $0.t < $1.t }
+        }
+    }
+
+    func deleteKeyframe(id: UUID) {
+        timelineKeys.removeAll { $0.id == id }
+    }
+
+    func setKeyframeEasing(id: UUID, _ easing: KeyEasing) {
+        guard let i = timelineKeys.firstIndex(where: { $0.id == id }) else { return }
+        timelineKeys[i].easing = easing
+    }
+
+    func moveKeyframe(id: UUID, to t: Double) {
+        guard let i = timelineKeys.firstIndex(where: { $0.id == id }) else { return }
+        timelineKeys[i].t = min(1, max(0, t))
+        timelineKeys.sort { $0.t < $1.t }
+    }
+
+    /// Move the playhead and apply the interpolated state to the live
+    /// controls (sliders follow, like scrubbing in an NLE).
+    func scrubTimeline(to t: Double) {
+        playheadT = min(1, max(0, t))
+        guard timelineEnabled, let ev = makeTimelineEvaluator() else { return }
+        setAllParams(paramValues.merging(ev.shaderParams(at: playheadT)) { _, new in new })
+        applyNtscValues(ev.ntscValues(at: playheadT))
+    }
+
+    func toggleTimelinePreview() {
+        if timelinePlaying { stopTimelinePreview(); return }
+        guard timelineEnabled, isImageSource, !exportInProgress else { return }
+        timelinePlaying = true
+        timelinePreviewTask = Task { @MainActor [weak self] in
+            while let self, self.timelinePlaying, !Task.isCancelled {
+                guard !self.exportInProgress else { self.stopTimelinePreview(); return }
+                let start = ContinuousClock.now
+                let dt = 1.0 / Double(self.timelineTotalFrames)
+                var next = self.playheadT + dt
+                if next > 1 { next = 0 }        // loop, like video playback
+                self.scrubTimeline(to: next)
+                self.tickFrame()                // VHS noise advances too
+                self.markChainDirty()
+                let frameDuration = Duration.seconds(1.0 / Double(max(1, self.timelineFPS)))
+                let elapsed = start.duration(to: .now)
+                if elapsed < frameDuration {
+                    try? await Task.sleep(for: frameDuration - elapsed)
+                }
+            }
+        }
+    }
+
+    func stopTimelinePreview() {
+        timelinePlaying = false
+        timelinePreviewTask?.cancel()
+        timelinePreviewTask = nil
+    }
+
     // MARK: - VHS / ntsc-rs stage
 
     /// nil when the ntscrs-capi dylib wasn't found/loaded.
@@ -192,6 +312,13 @@ final class AppState {
 
     func resetNtsc() {
         ntscValues = ntscDefaults
+        pushNtscSettings()
+        markChainDirty()
+    }
+
+    /// Replace the whole VHS settings dict at once (timeline scrub/load).
+    func applyNtscValues(_ values: [String: Any]) {
+        ntscValues = values
         pushNtscSettings()
         markChainDirty()
     }
@@ -523,6 +650,19 @@ final class AppState {
                 "animate": animatePreview,
                 "compare": compareEnabled,
             ],
+            "timeline": [
+                "enabled": timelineEnabled,
+                "duration": timelineDuration,
+                "fps": timelineFPS,
+                "keys": timelineKeys.map { k in
+                    [
+                        "t": k.t,
+                        "easing": k.easing.rawValue,
+                        "shader": k.shaderParams.mapValues { Double($0) },
+                        "ntsc": k.ntscValues,
+                    ] as [String: Any]
+                },
+            ],
         ]
     }
 
@@ -571,6 +711,20 @@ final class AppState {
             if let b = v["integerScale"] as? Bool { integerScale = b }
             if let b = v["animate"] as? Bool { animatePreview = b }
             if let b = v["compare"] as? Bool { compareEnabled = b }
+        }
+        if let t = dict["timeline"] as? [String: Any] {
+            if let d = t["duration"] as? Double { timelineDuration = d }
+            if let f = t["fps"] as? Int { timelineFPS = f }
+            if let rawKeys = t["keys"] as? [[String: Any]] {
+                timelineKeys = rawKeys.compactMap { k in
+                    guard let kt = k["t"] as? Double else { return nil }
+                    let easing = (k["easing"] as? String).flatMap(KeyEasing.init(rawValue:)) ?? .linear
+                    let shader = (k["shader"] as? [String: Double])?.mapValues { Float($0) } ?? [:]
+                    let ntsc = k["ntsc"] as? [String: Any] ?? [:]
+                    return Keyframe(t: kt, easing: easing, shaderParams: shader, ntscValues: ntsc)
+                }.sorted { $0.t < $1.t }
+            }
+            if let e = t["enabled"] as? Bool { timelineEnabled = e && isImageSource }
         }
         markChainDirty()
     }

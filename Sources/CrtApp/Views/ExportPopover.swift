@@ -34,7 +34,7 @@ struct ExportPopover: View {
 
     private var computedBitrate: Int {
         let size = outputSize
-        let fps = Double(state.videoSource?.frameRate ?? 30)
+        let fps = state.videoSource.map { Double($0.frameRate) } ?? Double(state.timelineFPS)
         return max(2_000_000, Int(Double(size.width * size.height) * fps * state.exportQuality.bitsPerPixel))
     }
 
@@ -68,46 +68,69 @@ struct ExportPopover: View {
             Text("Output: \(size.width) × \(size.height) px (matches source aspect)")
                 .font(.caption).foregroundStyle(.secondary)
 
-            if isVideo {
-                HStack {
-                    Text("Codec").font(.caption)
-                    Picker("", selection: $state.exportCodec) {
-                        ForEach(Mp4Exporter.Codec.allCases, id: \.self) { c in
-                            Text(c.rawValue).tag(c)
-                        }
+            if !isVideo {
+                Button(state.exportWorking ? "Exporting…" : "Export PNG…") { exportPNG() }
+                    .disabled(state.sourceTexture == nil || state.chain == nil || state.exportWorking)
+
+                Divider()
+
+                Text(hasKeyframes ? "Video from this image (keyframe animation)"
+                                  : "Video from this image (VHS motion)")
+                    .font(.caption).bold()
+                HStack(spacing: 6) {
+                    Text("Duration").font(.caption)
+                    NumericField(value: $state.timelineDuration, range: 0.5...600, width: 44)
+                    Text("s").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("", selection: $state.timelineFPS) {
+                        Text("24 fps").tag(24)
+                        Text("30 fps").tag(30)
+                        Text("60 fps").tag(60)
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .fixedSize()
                 }
-                if !state.exportCodec.isProRes {
-                    HStack {
-                        Text("Quality").font(.caption)
-                        Picker("", selection: $state.exportQuality) {
-                            ForEach(ExportQuality.allCases, id: \.self) { q in
-                                Text(q.rawValue).tag(q)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .fixedSize()
-                        Spacer()
-                        Text(String(format: "≈ %.1f Mbps", Double(computedBitrate) / 1_000_000))
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Text("Codec").font(.caption)
+                Picker("", selection: $state.exportCodec) {
+                    ForEach(Mp4Exporter.Codec.allCases, id: \.self) { c in
+                        Text(c.rawValue).tag(c)
                     }
-                    Text("Scanline detail is brutal on codecs — use High or above, or ProRes for editing.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            if !state.exportCodec.isProRes {
+                HStack {
+                    Text("Quality").font(.caption)
+                    Picker("", selection: $state.exportQuality) {
+                        ForEach(ExportQuality.allCases, id: \.self) { q in
+                            Text(q.rawValue).tag(q)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    Spacer()
+                    Text(String(format: "≈ %.1f Mbps", Double(computedBitrate) / 1_000_000))
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                Text("Scanline detail is brutal on codecs — use High or above, or ProRes for editing.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Button(buttonLabel) {
-                if isVideo { exportMP4() } else { exportPNG() }
+                if isVideo { exportMP4() } else { exportStillVideo() }
             }
             .disabled(state.sourceTexture == nil || state.chain == nil || state.exportWorking)
 
-            if state.exportWorking && isVideo {
+            if state.exportWorking {
                 ProgressView(value: state.exportProgress)
                     .progressViewStyle(.linear)
             }
@@ -128,9 +151,14 @@ struct ExportPopover: View {
         return f.string(from: Date())
     }
 
+    private var hasKeyframes: Bool {
+        state.timelineEnabled && !state.timelineKeys.isEmpty
+    }
+
     private var buttonLabel: String {
-        if state.exportWorking { return isVideo ? "Exporting…" : "Exporting PNG…" }
-        return isVideo ? "Export \(state.exportCodec.isProRes ? "MOV" : "MP4")…" : "Export PNG…"
+        if state.exportWorking { return "Exporting…" }
+        let ext = state.exportCodec.isProRes ? "MOV" : "MP4"
+        return isVideo ? "Export \(ext)…" : "Export video (\(ext))…"
     }
 
     // MARK: - PNG (image source)
@@ -209,6 +237,81 @@ struct ExportPopover: View {
             }
         }
         cb.commit()
+    }
+
+    // MARK: - video from a still (VHS motion / keyframe animation)
+
+    private func exportStillVideo() {
+        guard let source = state.sourceTexture, state.chain != nil else { return }
+        let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
+        let codec = state.exportCodec
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [codec.isProRes ? .quickTimeMovie : .mpeg4Movie]
+        panel.nameFieldStringValue = "crt export \(exportTimestamp).\(codec.fileExtension)"
+        guard panel.runModal() == .OK, let outURL = panel.url else { return }
+
+        let size = outputSize
+        state.exportWorking = true
+        state.exportProgress = 0
+        state.exportStatus = "Encoding…"
+        state.stopTimelinePreview()
+        state.exportInProgress = true
+
+        let exporter = Mp4Exporter(context: state.context)
+        let settings = Mp4Exporter.Settings(
+            outputURL: outURL,
+            outputWidth: size.width,
+            outputHeight: size.height,
+            downscale: state.downscaleSpec,
+            presetPath: preset.path,
+            codec: codec,
+            averageBitrate: computedBitrate
+        )
+        let params = state.paramValues
+        let ntscJSON: String? = (state.ntscEnabled && state.ntscAvailable)
+            ? state.ntscStage?.settingsJSON()
+            : nil
+        let totalFrames = state.timelineTotalFrames
+        let fps = state.timelineFPS
+
+        // Keyframes drive per-frame parameters; without keys the params hold
+        // and only the frame-seeded VHS noise animates.
+        let evaluator = hasKeyframes ? state.makeTimelineEvaluator() : nil
+        let frameParams: (@Sendable (Int, Int) -> (shader: [String: Float]?, ntscJSON: String?))? =
+            evaluator.map { ev in
+                { i, total in
+                    let t = total > 1 ? Double(i) / Double(total - 1) : 0
+                    return (shader: ev.shaderParams(at: t), ntscJSON: ev.ntscJSON(at: t))
+                }
+            }
+        let state = state
+
+        Task {
+            do {
+                try await exporter.exportStill(source: source,
+                                               totalFrames: totalFrames,
+                                               fps: fps,
+                                               paramValues: params,
+                                               settings: settings,
+                                               ntscSettingsJSON: ntscJSON,
+                                               frameParams: frameParams) { p in
+                    Task { @MainActor in state.exportProgress = p }
+                }
+                await MainActor.run {
+                    state.exportStatus = "Wrote \(outURL.lastPathComponent) (\(size.width) × \(size.height))"
+                    state.exportWorking = false
+                    state.exportProgress = 1
+                    state.exportInProgress = false
+                }
+            } catch {
+                await MainActor.run {
+                    state.exportStatus = "Export failed: \(error.localizedDescription)"
+                    state.exportWorking = false
+                    state.exportInProgress = false
+                }
+            }
+        }
     }
 
     // MARK: - MP4 (video source)

@@ -566,6 +566,13 @@ final class PreviewMTKView: MTKView {
 
     // MARK: mouse
 
+    /// Keep the compare line a few points inside the edges so it never
+    /// vanishes (or becomes ungrabbable) when dragged all the way across.
+    private func clampedCompareX(_ p: CGPoint) -> Float {
+        let m = 3.0 / max(bounds.width, 1)
+        return Float(max(m, min(1 - m, p.x / bounds.width)))
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard let state = appState else { return }
         let p = convert(event.locationInWindow, from: nil)
@@ -581,7 +588,7 @@ final class PreviewMTKView: MTKView {
             let lineX = bounds.width * CGFloat(state.compareLineX)
             if abs(p.x - lineX) < 12 {
                 draggingCompareLine = true
-                state.compareLineX = Float(max(0, min(1, p.x / bounds.width)))
+                state.compareLineX = clampedCompareX(p)
                 return
             }
         }
@@ -592,7 +599,7 @@ final class PreviewMTKView: MTKView {
         let p = convert(event.locationInWindow, from: nil)
 
         if draggingCompareLine {
-            state.compareLineX = Float(max(0, min(1, p.x / bounds.width)))
+            state.compareLineX = clampedCompareX(p)
             return
         }
         if spaceDown && state.zoom > 1.0 {
