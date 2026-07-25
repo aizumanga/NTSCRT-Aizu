@@ -57,6 +57,11 @@ struct PreviewView: NSViewRepresentable {
         /// Safety cap on the offscreen render target's long edge (the target
         /// normally matches the drawable size).
         private static let maxTargetLongEdge = 4096
+        /// Fewest output rows per source line the chain may render at with
+        /// integer scale on. 6 is where the glow shaders stop clipping (see
+        /// renderTargetSize); anything the window can't show 1:1 is
+        /// area-downsampled for display instead.
+        private static let minScanlineMultiple = 6
         /// CRT_SCALE_LOG=1: report drawable/target sizes and letterbox parity.
         private static let scaleLog = ProcessInfo.processInfo.environment["CRT_SCALE_LOG"] == "1"
         private static var lastScaleLogKey = ""
@@ -183,8 +188,8 @@ struct PreviewView: NSViewRepresentable {
             }
 
             // Final composite into the drawable (compare line + zoom + pan).
-            composite(primary: primary,
-                      secondary: state.compareEnabled ? (secondaryTarget ?? primary) : primary,
+            composite(primaryIn: primary,
+                      secondaryIn: state.compareEnabled ? (secondaryTarget ?? primary) : primary,
                       into: drawable.texture, cb: cb)
 
             cb.present(drawable)
@@ -201,8 +206,17 @@ struct PreviewView: NSViewRepresentable {
             // already carries the source aspect.) Capped for safety.
             if let size = view?.drawableSize, size.width >= 1, size.height >= 1 {
                 if state.integerScale, inputW > 0, inputH > 0 {
-                    // Largest whole multiple of the chain input that fits the
-                    // drawable; the composite letterboxes it at 1:1.
+                    // Whole multiple of the chain input, so every source line
+                    // gets the same number of rows.
+                    //
+                    // The multiple has a FLOOR that doesn't depend on the
+                    // window. CRT shaders work in output pixels, so a small
+                    // window used to pick k=1 — one row per source line, no
+                    // room to draw a scanline, and a bloom radius covering a
+                    // huge fraction of the frame. Measured on a 320-line
+                    // input: k=1 clips 21% of the frame, k=2 clips 6%, k=4
+                    // clips 0.6%, k=6 clips none. Below the floor the preview
+                    // stopped matching the export and changed as you resized.
                     var k = max(1, min(Int(size.width) / inputW,
                                        Int(size.height) / inputH))
                     // Prefer EVEN multiples: the glow shaders' half-texel
@@ -212,6 +226,12 @@ struct PreviewView: NSViewRepresentable {
                     // k=9/11 vs 0.35 at k=10/12). Even k parks the boundary
                     // mid-row, immune to rounding.
                     if k > 1 && k % 2 == 1 { k -= 1 }
+                    k = max(k, Self.minScanlineMultiple)
+                    // Respect the texture budget for big chain inputs.
+                    while k > 1 && (inputW * k > Self.maxTargetLongEdge
+                                    || inputH * k > Self.maxTargetLongEdge) {
+                        k -= (k > 2 ? 2 : 1)
+                    }
                     return (inputW * k, inputH * k)
                 }
                 let cap = Double(Self.maxTargetLongEdge)
@@ -229,6 +249,32 @@ struct PreviewView: NSViewRepresentable {
                 let w = max(64, Int((Double(cap) * Double(aspect)).rounded()))
                 return (w, cap)
             }
+        }
+
+        /// Area-downsampler + display-sized textures, allocated only when the
+        /// chain renders larger than the window can show.
+        private var downscaler: Downscaler?
+        private var fitTextures: [MTLTexture?] = [nil, nil]
+
+        private func obtainDownscaler() -> Downscaler? {
+            if let d = downscaler { return d }
+            downscaler = try? Downscaler(device: state.context.device)
+            return downscaler
+        }
+
+        private func obtainFitTexture(slot: Int, width: Int, height: Int,
+                                      format: MTLPixelFormat) -> MTLTexture? {
+            if let t = fitTextures[slot], t.width == width, t.height == height,
+               t.pixelFormat == format {
+                return t
+            }
+            let d = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite, .renderTarget]
+            d.storageMode = .private
+            let t = state.context.device.makeTexture(descriptor: d)
+            fitTextures[slot] = t
+            return t
         }
 
         private func makeTarget(width: Int, height: Int) -> MTLTexture {
@@ -446,10 +492,40 @@ struct PreviewView: NSViewRepresentable {
             var offY: Float
         }
 
-        private func composite(primary: MTLTexture,
-                               secondary: MTLTexture,
+        private func composite(primaryIn: MTLTexture,
+                               secondaryIn: MTLTexture,
                                into dst: MTLTexture,
                                cb: MTLCommandBuffer) {
+            var primary = primaryIn
+            var secondary = secondaryIn
+
+            // The chain may render larger than the window can show (integer
+            // scale keeps a minimum multiple so the shader has room to draw
+            // scanlines). Integrate it down to display size rather than
+            // point-sampling it, which would alias the scanlines away — the
+            // same reason the exporters supersample.
+            if state.zoom <= 1.001,
+               primary.width > dst.width || primary.height > dst.height,
+               let down = obtainDownscaler() {
+                let scale = min(Double(dst.width) / Double(primary.width),
+                                Double(dst.height) / Double(primary.height))
+                let fw = max(1, Int((Double(primary.width) * scale).rounded()))
+                let fh = max(1, Int((Double(primary.height) * scale).rounded()))
+                if let fitP = obtainFitTexture(slot: 0, width: fw, height: fh,
+                                               format: primary.pixelFormat) {
+                    down.encode(into: cb, source: primary, destination: fitP, method: .area)
+                    primary = fitP
+                }
+                if state.compareEnabled, secondaryIn !== primaryIn,
+                   let fitS = obtainFitTexture(slot: 1, width: fw, height: fh,
+                                               format: secondaryIn.pixelFormat) {
+                    down.encode(into: cb, source: secondaryIn, destination: fitS, method: .area)
+                    secondary = fitS
+                } else if secondaryIn === primaryIn {
+                    secondary = primary
+                }
+            }
+
             guard let pipe = obtainComposite(for: dst.pixelFormat) else { return }
             let pass = MTLRenderPassDescriptor()
             pass.colorAttachments[0].texture = dst
@@ -472,10 +548,10 @@ struct PreviewView: NSViewRepresentable {
             // ~150 of 1280 rows, an even delta none.
             if Self.scaleLog {
                 let dx = dst.width - primary.width, dy = dst.height - primary.height
-                let key = "\(dst.width)x\(dst.height)/\(primary.width)x\(primary.height)"
+                let key = "\(dst.width)x\(dst.height)/\(primaryIn.width)/\(primary.width)"
                 if key != Self.lastScaleLogKey {
                     Self.lastScaleLogKey = key
-                    fputs("[scale] drawable \(dst.width)x\(dst.height) target \(primary.width)x\(primary.height) delta \(dx),\(dy) \(dx % 2 == 0 && dy % 2 == 0 ? "even" : "ODD")\n", stderr)
+                    fputs("[scale] drawable \(dst.width)x\(dst.height) chain-render \(primaryIn.width)x\(primaryIn.height) displayed \(primary.width)x\(primary.height) delta \(dx),\(dy) \(dx % 2 == 0 && dy % 2 == 0 ? "even" : "ODD")\n", stderr)
                 }
             }
             let stretch = !state.integerScale
