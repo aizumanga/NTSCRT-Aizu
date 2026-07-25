@@ -10,7 +10,9 @@ struct TimelineBar: View {
 
     private let rulerHeight: CGFloat = 28
     private let trackHeight: CGFloat = 92
-    private let chipRowHeight: CGFloat = 34
+    private let chipRowHeight: CGFloat = 30
+    private let chipTopGap: CGFloat = 10        // breathing room under the track
+    private let chipWidth: CGFloat = 92
 
     var body: some View {
         @Bindable var state = state
@@ -19,7 +21,8 @@ struct TimelineBar: View {
             GeometryReader { geo in
                 track(width: max(1, geo.size.width))
             }
-            .frame(height: rulerHeight + trackHeight + chipRowHeight * CGFloat(chipRowCount))
+            .frame(height: rulerHeight + trackHeight + chipTopGap
+                           + chipRowHeight * CGFloat(chipRowCount))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
@@ -227,8 +230,13 @@ struct TimelineBar: View {
 
     /// Easing dropdown under each keyframe. Chips stagger onto a second row
     /// when neighbours are too close to sit side by side.
+    ///
+    /// The chip lives in a fixed-width container so it centres on the
+    /// keyframe regardless of the label ("Linear" vs "Ease in-out"), and
+    /// draws its own chevron — the system menu indicator sits at the
+    /// trailing edge and would throw the centring off.
     private func easingChip(for key: Keyframe, width: CGFloat, row: Int) -> some View {
-        let y = rulerHeight + trackHeight + CGFloat(row) * chipRowHeight
+        let y = rulerHeight + trackHeight + chipTopGap + CGFloat(row) * chipRowHeight
         return Menu {
             ForEach(KeyEasing.allCases, id: \.self) { e in
                 Button {
@@ -239,14 +247,27 @@ struct TimelineBar: View {
                 }
             }
         } label: {
-            Text(key.easing.rawValue)
-                .font(.system(size: 10))
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(key.easing.rawValue)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.07),
+                        in: RoundedRectangle(cornerRadius: 5))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
-        .fixedSize()
-        .offset(x: max(0, min(CGFloat(key.t) * width - 30, width - 76)), y: y)
+        // .borderlessButton discards a custom label (it renders its own
+        // title + leading indicator), which breaks both the centring and
+        // the chip styling — .button keeps the label exactly as authored.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .frame(width: chipWidth)
+        .offset(x: max(0, min(CGFloat(key.t) * width - chipWidth / 2, width - chipWidth)), y: y)
         .tooltip("Interpolation leaving this keyframe")
     }
 
@@ -263,7 +284,10 @@ struct TimelineBar: View {
     private func chipRows() -> [(key: Keyframe, row: Int)] {
         var out: [(Keyframe, Int)] = []
         var lastRowT: [Double] = [-1, -1]
-        let minGap = 0.16          // normalized width a chip occupies
+        // Approximate: the chip is a fixed 92pt and the track is typically
+        // 600–1300pt, so this errs toward staggering a little early rather
+        // than letting chips overlap in a narrow window.
+        let minGap = 0.13
         for key in state.timelineKeys.sorted(by: { $0.t < $1.t }) {
             let row = (key.t - lastRowT[0]) >= minGap ? 0 : 1
             lastRowT[row] = key.t

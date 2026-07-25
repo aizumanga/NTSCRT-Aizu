@@ -248,10 +248,47 @@ final class AppState {
     /// Move the playhead and apply the interpolated state to the live
     /// controls (sliders follow, like scrubbing in an NLE).
     func scrubTimeline(to t: Double) {
-        playheadT = min(1, max(0, t))
+        var target = min(1, max(0, t))
+        // Magnetic playhead: land exactly on a nearby keyframe (~5px) so the
+        // applied values are that keyframe's own — which is also what makes
+        // it editable in place (see autoKeyIfParked).
+        if let near = timelineKeys.min(by: { abs($0.t - target) < abs($1.t - target) }),
+           abs(near.t - target) < 0.004 {
+            target = near.t
+        }
+        playheadT = target
         guard timelineEnabled, let ev = makeTimelineEvaluator() else { return }
-        setAllParams(paramValues.merging(ev.shaderParams(at: playheadT)) { _, new in new })
-        applyNtscValues(ev.ntscValues(at: playheadT))
+        // Applying interpolated values must never look like a user edit.
+        withAutoKeySuppressed {
+            setAllParams(paramValues.merging(ev.shaderParams(at: playheadT)) { _, new in new })
+            applyNtscValues(ev.ntscValues(at: playheadT))
+        }
+    }
+
+    // MARK: - auto-keying
+
+    /// True while parameter writes come from the app (scrubbing, preset
+    /// load, chain reload) rather than from the user turning a knob.
+    private var suppressAutoKey = false
+
+    private func withAutoKeySuppressed(_ body: () -> Void) {
+        let previous = suppressAutoKey
+        suppressAutoKey = true
+        body()
+        suppressAutoKey = previous
+    }
+
+    /// When the playhead sits exactly on a keyframe, editing any parameter
+    /// rewrites that keyframe — the After Effects / Premiere behaviour, so
+    /// tweaking a look you've jumped to doesn't silently get discarded on
+    /// the next scrub. Only ever fires for user edits, and only for an
+    /// exact hit: at any other time the live values are interpolated, and
+    /// baking those into a keyframe would drag it toward its neighbour.
+    private func autoKeyIfParked() {
+        guard timelineEnabled, !suppressAutoKey, !timelinePlaying, !exportInProgress else { return }
+        guard let i = timelineKeys.firstIndex(where: { abs($0.t - playheadT) < 1e-6 }) else { return }
+        timelineKeys[i].shaderParams = paramValues
+        timelineKeys[i].ntscValues = ntscValues
     }
 
     func toggleTimelinePreview() {
@@ -299,6 +336,7 @@ final class AppState {
     func setNtscValue(_ name: String, _ value: Any) {
         ntscValues[name] = value
         pushNtscSettings()
+        autoKeyIfParked()
         markChainDirty()
     }
 
@@ -313,6 +351,7 @@ final class AppState {
     func resetNtsc() {
         ntscValues = ntscDefaults
         pushNtscSettings()
+        autoKeyIfParked()
         markChainDirty()
     }
 
@@ -541,6 +580,11 @@ final class AppState {
     }
 
     private func reloadChain() {
+        // Preset switches restore stored values; that isn't a user edit.
+        let previousSuppress = suppressAutoKey
+        suppressAutoKey = true
+        defer { suppressAutoKey = previousSuppress }
+
         chain = nil
         paramDescriptors = []
         paramValues = [:]
@@ -607,6 +651,7 @@ final class AppState {
         guard paramValues[name] != value else { return }
         paramValues[name] = value
         applyOne(name, value)
+        autoKeyIfParked()
         markChainDirty()
     }
 
@@ -616,6 +661,7 @@ final class AppState {
         for (name, value) in values {
             applyOne(name, value)
         }
+        autoKeyIfParked()
         markChainDirty()
     }
 
@@ -677,6 +723,12 @@ final class AppState {
     }
 
     func loadLook(from url: URL) throws {
+        // Loading a preset writes every parameter; it must not rewrite the
+        // keyframes it is in the middle of restoring.
+        let previousSuppress = suppressAutoKey
+        suppressAutoKey = true
+        defer { suppressAutoKey = previousSuppress }
+
         let data = try Data(contentsOf: url)
         guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw LookError.badFile

@@ -95,6 +95,7 @@ For iteration and headless/screenshot verification:
 - `CRT_TIMELINE=1` — open the keyframe timeline at launch (image sources)
 - `CRT_TL_DEMO=1` — open the timeline and drop two demo keyframes on it
 - `CRT_TL_SELFTEST=<out.mp4>` — headless end-to-end check of the keyframe export: builds a two-key animation, renders it to `<out.mp4>`, exits
+- `CRT_TL_AUTOKEY_TEST=1` — assert the auto-key rules (edit on a keyframe rewrites it, edits between keyframes don't, scrubbing never mutates), print PASS/FAIL, exit
 - `CRT_COMPARE_X=<0…1>` — place the compare divider at launch (edge-case captures)
 - `CRT_FRONT=1` — activate the app at launch
 - `CRT_DUMP_TOOLTIPS=1` — print every NSView carrying tooltip text, plus what a click at its centre hits, then exit

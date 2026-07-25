@@ -112,7 +112,8 @@ struct ContentView: View {
         let env = ProcessInfo.processInfo.environment
         guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
                 || env["CRT_TL_SELFTEST"] != nil || env["CRT_COMPARE_X"] != nil
-                || env["CRT_FRONT"] == "1" || env["CRT_DUMP_TOOLTIPS"] == "1" else { return }
+                || env["CRT_FRONT"] == "1" || env["CRT_DUMP_TOOLTIPS"] == "1"
+                || env["CRT_TL_AUTOKEY_TEST"] == "1" else { return }
         var tries = 0
         while tries < 100 && !(state.isImageSource && state.chain != nil) {
             try? await Task.sleep(for: .milliseconds(100))
@@ -126,7 +127,8 @@ struct ContentView: View {
             NSApp.windows.first?.makeKeyAndOrderFront(nil)
         }
         guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
-                || env["CRT_TL_SELFTEST"] != nil else { return }
+                || env["CRT_TL_SELFTEST"] != nil
+                || env["CRT_TL_AUTOKEY_TEST"] == "1" else { return }
         state.timelineEnabled = true
         if env["CRT_TL_DEMO"] == "1" {
             state.scrubTimeline(to: 0.2)
@@ -162,8 +164,69 @@ struct ContentView: View {
             print("TOOLTIP-DUMP-END")
             exit(0)
         }
+        if env["CRT_TL_AUTOKEY_TEST"] == "1" {
+            runAutoKeyTest()
+        }
         guard let out = env["CRT_TL_SELFTEST"] else { return }
         await runTimelineSelfTest(out: URL(fileURLWithPath: out))
+    }
+
+    /// Exercises the auto-key rules: editing a parameter while parked on a
+    /// keyframe rewrites it; editing between keyframes doesn't; scrubbing
+    /// never mutates anything.
+    private func runAutoKeyTest() {
+        state.timelineEnabled = true
+        state.timelineKeys = []
+        state.timelineDuration = 5
+
+        state.scrubTimeline(to: 0.2); state.setKeyframeAtPlayhead()
+        state.scrubTimeline(to: 0.8); state.setKeyframeAtPlayhead()
+        guard state.timelineKeys.count == 2, let param = state.paramDescriptors.first else {
+            print("AUTOKEY FAIL: setup"); exit(1)
+        }
+        let name = param.name
+        func keyValue(_ i: Int) -> Float? { state.timelineKeys[i].shaderParams[name] }
+        var failures = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            print("AUTOKEY \(ok ? "PASS" : "FAIL") \(label) \(detail)")
+            if !ok { failures += 1 }
+        }
+
+        // 1. Scrubbing alone must not touch stored keyframes.
+        let before = (keyValue(0), keyValue(1))
+        state.scrubTimeline(to: 0.35)
+        state.scrubTimeline(to: 0.62)
+        check("scrub-does-not-mutate", (keyValue(0), keyValue(1)) == before,
+              "\(String(describing: before)) -> \(String(describing: (keyValue(0), keyValue(1))))")
+
+        // 2. Parked exactly on key 0, a parameter edit rewrites key 0 only.
+        state.scrubTimeline(to: 0.2)
+        let edited = (param.minimum + param.maximum) / 2 + param.step
+        let key1Before = keyValue(1)
+        state.setParam(name, edited)
+        check("edit-on-keyframe-updates-it", keyValue(0) == edited,
+              "stored=\(String(describing: keyValue(0))) expected=\(edited)")
+        check("edit-on-keyframe-leaves-others", keyValue(1) == key1Before)
+
+        // 3. Between keyframes, edits are live-only — no keyframe is touched.
+        state.scrubTimeline(to: 0.5)
+        let snapshot = (keyValue(0), keyValue(1))
+        state.setParam(name, param.minimum)
+        check("edit-between-keyframes-keys-nothing", (keyValue(0), keyValue(1)) == snapshot,
+              "\(String(describing: snapshot)) -> \(String(describing: (keyValue(0), keyValue(1))))")
+
+        // 4. VHS settings follow the same rule.
+        state.scrubTimeline(to: 0.8)
+        state.setNtscValue("composite_preemphasis", 2.5)
+        let stored = (state.timelineKeys[1].ntscValues["composite_preemphasis"] as? NSNumber)?.doubleValue
+        check("vhs-edit-on-keyframe-updates-it", stored == 2.5, "stored=\(String(describing: stored))")
+
+        // 5. The magnetic playhead lands exactly on a nearby key.
+        state.scrubTimeline(to: 0.2 + 0.002)
+        check("playhead-snaps-to-key", state.playheadT == 0.2, "playhead=\(state.playheadT)")
+
+        print(failures == 0 ? "AUTOKEY-ALL-PASS" : "AUTOKEY-FAILURES \(failures)")
+        exit(failures == 0 ? 0 : 1)
     }
 
     private func runTimelineSelfTest(out: URL) async {
