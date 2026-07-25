@@ -484,7 +484,12 @@ final class AppState {
     // MARK: - export settings/state (toolbar popover)
 
     var exportLongEdge: Int = 1920
-    var exportCodec: Mp4Exporter.Codec = .h264
+    var exportFormat: ExportFormat = .h264
+    /// GIF gets its own size and frame rate: it's a 256-colour, poorly
+    /// compressing format, so the sizes that work for MP4 produce files
+    /// nothing will accept (a 1080px 5s 30fps GIF of VHS noise is ~30 MB).
+    var gifWidth: Int = 480
+    var gifFPS: Int = 12
     var exportQuality: ExportQuality = .high
     var exportStatus: String = ""
     var exportProgress: Double = 0

@@ -113,11 +113,16 @@ struct ContentView: View {
         guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
                 || env["CRT_TL_SELFTEST"] != nil || env["CRT_COMPARE_X"] != nil
                 || env["CRT_FRONT"] == "1" || env["CRT_DUMP_TOOLTIPS"] == "1"
-                || env["CRT_TL_AUTOKEY_TEST"] == "1" else { return }
+                || env["CRT_TL_AUTOKEY_TEST"] == "1"
+                || env["CRT_GIF_SELFTEST"] != nil
+                || env["CRT_EXPORT_FORMAT"] != nil else { return }
         var tries = 0
-        while tries < 100 && !(state.isImageSource && state.chain != nil) {
+        while tries < 100 && !((state.sourceTexture != nil) && state.chain != nil) {
             try? await Task.sleep(for: .milliseconds(100))
             tries += 1
+        }
+        if let f = env["CRT_EXPORT_FORMAT"].flatMap(ExportFormat.init(rawValue:)) {
+            state.exportFormat = f
         }
         if let cx = env["CRT_COMPARE_X"].flatMap(Float.init) {
             state.compareLineX = cx
@@ -128,7 +133,8 @@ struct ContentView: View {
         }
         guard env["CRT_TIMELINE"] == "1" || env["CRT_TL_DEMO"] == "1"
                 || env["CRT_TL_SELFTEST"] != nil
-                || env["CRT_TL_AUTOKEY_TEST"] == "1" else { return }
+                || env["CRT_TL_AUTOKEY_TEST"] == "1"
+                || env["CRT_GIF_SELFTEST"] != nil else { return }
         state.timelineEnabled = true
         if env["CRT_TL_DEMO"] == "1" {
             state.scrubTimeline(to: 0.2)
@@ -166,6 +172,9 @@ struct ContentView: View {
         }
         if env["CRT_TL_AUTOKEY_TEST"] == "1" {
             runAutoKeyTest()
+        }
+        if let gifOut = env["CRT_GIF_SELFTEST"] {
+            await runGifSelfTest(out: URL(fileURLWithPath: gifOut))
         }
         guard let out = env["CRT_TL_SELFTEST"] else { return }
         await runTimelineSelfTest(out: URL(fileURLWithPath: out))
@@ -227,6 +236,71 @@ struct ContentView: View {
 
         print(failures == 0 ? "AUTOKEY-ALL-PASS" : "AUTOKEY-FAILURES \(failures)")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    /// Renders a keyframed GIF headlessly so the whole path (evaluator →
+    /// GifExporter → ImageIO) can be checked without the save panel.
+    private func runGifSelfTest(out: URL) async {
+        guard let source = state.sourceTexture, state.chain != nil else {
+            print("GIF_SELFTEST: no source/chain"); exit(1)
+        }
+        let env = ProcessInfo.processInfo.environment
+        state.timelineEnabled = true
+        state.timelineDuration = env["CRT_GIF_SECONDS"].flatMap(Double.init) ?? 2
+        state.gifWidth = env["CRT_GIF_W"].flatMap(Int.init) ?? 480
+        state.gifFPS = env["CRT_GIF_FPS"].flatMap(Int.init) ?? 12
+
+        // CRT_GIF_PLAIN measures the shipped look (VHS motion only); the
+        // default path also exercises keyframe interpolation.
+        var ev: TimelineEvaluator? = nil
+        if env["CRT_GIF_PLAIN"] != "1" {
+            state.scrubTimeline(to: 1); state.setKeyframeAtPlayhead()
+            state.scrubTimeline(to: 0)
+            var floored: [String: Float] = [:]
+            for p in state.paramDescriptors { floored[p.name] = p.minimum }
+            state.setAllParams(floored)
+            state.setKeyframeAtPlayhead()
+            ev = state.makeTimelineEvaluator()
+            if ev == nil { print("GIF_SELFTEST: no evaluator"); exit(1) }
+        }
+        let w = state.gifWidth & ~1
+        let h = max(64, Int((Double(w) / Double(state.sourceAspect)).rounded())) & ~1
+        let frames = Int((state.timelineDuration * Double(state.gifFPS)).rounded())
+        let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
+        let settings = GifExporter.Settings(outputURL: out, width: w, height: h,
+                                            fps: state.gifFPS,
+                                            downscale: state.downscaleSpec,
+                                            presetPath: preset.path)
+        let ntscJSON: String? = (state.ntscEnabled && state.ntscAvailable)
+            ? state.ntscStage?.settingsJSON() : nil
+        do {
+            if let vs = state.videoSource {
+                try await GifExporter(context: state.context).exportVideo(
+                    source: vs, paramValues: state.paramValues,
+                    settings: settings, ntscSettingsJSON: ntscJSON, progress: { _ in })
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
+                print("GIF_SELFTEST video \(w)x\(h) fps=\(state.gifFPS) bytes=\(bytes ?? 0)")
+                exit(0)
+            }
+            try await GifExporter(context: state.context).exportStill(
+                source: source, totalFrames: frames,
+                paramValues: state.paramValues, settings: settings,
+                ntscSettingsJSON: ntscJSON,
+                frameParams: ev.map { e in
+                    { i, n in
+                        let t = n > 1 ? Double(i) / Double(n - 1) : 0
+                        return (shader: e.shaderParams(at: t), ntscJSON: e.ntscJSON(at: t))
+                    }
+                },
+                progress: { _ in })
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
+            let bpf = Double(bytes ?? 0) / Double(w * h * frames)
+            print("GIF_SELFTEST \(w)x\(h) frames=\(frames) fps=\(state.gifFPS) bytes=\(bytes ?? 0) bytesPerPxPerFrame=\(String(format: "%.3f", bpf))")
+            exit(0)
+        } catch {
+            print("GIF_SELFTEST failed: \(error)")
+            exit(1)
+        }
     }
 
     private func runTimelineSelfTest(out: URL) async {

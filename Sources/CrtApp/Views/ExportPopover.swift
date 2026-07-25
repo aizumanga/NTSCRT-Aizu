@@ -77,25 +77,31 @@ struct ExportPopover: View {
                 Text(hasKeyframes ? "Video from this image (keyframe animation)"
                                   : "Video from this image (VHS motion)")
                     .font(.caption).bold()
-                // Length and frame rate belong to the timeline — one source
-                // of truth, set where you can see the keyframes.
-                Text(String(format: "%.1f s at %d fps — set in the Timeline",
-                            state.timelineDuration, state.timelineFPS))
+                // Length belongs to the timeline — one source of truth, set
+                // where you can see the keyframes. GIF brings its own frame
+                // rate, so don't advertise the timeline's here.
+                Text(state.exportFormat.isGIF
+                     ? String(format: "%.1f s — set in the Timeline", state.timelineDuration)
+                     : String(format: "%.1f s at %d fps — set in the Timeline",
+                              state.timelineDuration, state.timelineFPS))
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             HStack {
-                Text("Codec").font(.caption)
-                Picker("", selection: $state.exportCodec) {
-                    ForEach(Mp4Exporter.Codec.allCases, id: \.self) { c in
-                        Text(c.rawValue).tag(c)
+                Text("Format").font(.caption)
+                Picker("", selection: $state.exportFormat) {
+                    ForEach(ExportFormat.allCases, id: \.self) { f in
+                        Text(f.rawValue).tag(f)
                     }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
             }
-            if !state.exportCodec.isProRes {
+
+            if state.exportFormat.isGIF {
+                gifControls
+            } else if !state.exportFormat.isProRes {
                 HStack {
                     Text("Quality").font(.caption)
                     Picker("", selection: $state.exportQuality) {
@@ -117,7 +123,9 @@ struct ExportPopover: View {
             }
 
             Button(buttonLabel) {
-                if isVideo { exportMP4() } else { exportStillVideo() }
+                if state.exportFormat.isGIF { exportGIF() }
+                else if isVideo { exportMP4() }
+                else { exportStillVideo() }
             }
             .disabled(state.sourceTexture == nil || state.chain == nil || state.exportWorking)
 
@@ -148,8 +156,75 @@ struct ExportPopover: View {
 
     private var buttonLabel: String {
         if state.exportWorking { return "Exporting…" }
-        let ext = state.exportCodec.isProRes ? "MOV" : "MP4"
-        return isVideo ? "Export \(ext)…" : "Export video (\(ext))…"
+        let name = state.exportFormat.buttonName
+        if state.exportFormat.isGIF { return "Export GIF…" }
+        return isVideo ? "Export \(name)…" : "Export video (\(name))…"
+    }
+
+    // MARK: - GIF controls
+
+    /// GIF gets its own width and frame rate — the video settings produce
+    /// files nothing will accept (see GifExporter).
+    private var gifControls: some View {
+        @Bindable var state = state
+        let size = gifSize
+        let frames = gifFrameCount
+        let bytes = GifExporter.estimatedBytes(width: size.width, height: size.height, frames: frames)
+        let trueFPS = GifExporter.trueFPS(for: state.gifFPS)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Width").font(.caption)
+                IntField(value: $state.gifWidth, range: 64...4096, width: 56)
+                Text("px").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: $state.gifFPS) {
+                    ForEach([6, 12, 24, 30], id: \.self) { f in
+                        Text("\(f) fps").tag(f)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            .tooltip("GIF size and frame rate. Height follows the source aspect ratio. Length comes from the timeline.")
+
+            Text("\(size.width) × \(size.height) px  ·  \(frames) frames  ·  ≈ \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(bytes > 10_000_000 ? .orange : .secondary)
+
+            if bytes > 10_000_000 {
+                Text("Most platforms cap GIFs around 10–15 MB. Drop the width or frame rate.")
+                    .font(.caption2).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("GIF is 256 colours and compresses noise badly, so size climbs fast. Estimate assumes a noisy look; clean ones come in under.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if abs(trueFPS - Double(state.gifFPS)) > 0.2 {
+                // GIF delays are whole hundredths of a second, so the rate
+                // lands on that grid rather than exactly where asked.
+                Text(String(format: "Plays at %.1f fps (GIF timing grid).", trueFPS))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// GIF output size: chosen width, height from the source aspect, both even.
+    private var gifSize: (width: Int, height: Int) {
+        let w = max(64, state.gifWidth)
+        let h = max(64, Int((Double(w) / Double(state.sourceAspect)).rounded()))
+        return (w & ~1, h & ~1)
+    }
+
+    private var gifFrameCount: Int {
+        if let vs = state.videoSource {
+            let seconds = Double(vs.totalFrames) / Double(max(1, vs.frameRate))
+            return max(1, Int((seconds * Double(state.gifFPS)).rounded(.down)))
+        }
+        return max(1, Int((state.timelineDuration * Double(state.gifFPS)).rounded()))
     }
 
     // MARK: - PNG (image source)
@@ -230,12 +305,94 @@ struct ExportPopover: View {
         cb.commit()
     }
 
+    // MARK: - GIF (still or video source)
+
+    private func exportGIF() {
+        guard let source = state.sourceTexture, state.chain != nil else { return }
+        let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.gif]
+        panel.nameFieldStringValue = "crt export \(exportTimestamp).gif"
+        guard panel.runModal() == .OK, let outURL = panel.url else { return }
+
+        let size = gifSize
+        state.exportWorking = true
+        state.exportProgress = 0
+        state.exportStatus = "Encoding GIF…"
+        state.stopPlayback()
+        state.stopTimelinePreview()
+        state.exportInProgress = true
+
+        let exporter = GifExporter(context: state.context)
+        let settings = GifExporter.Settings(
+            outputURL: outURL,
+            width: size.width,
+            height: size.height,
+            fps: state.gifFPS,
+            downscale: state.downscaleSpec,
+            presetPath: preset.path
+        )
+        let params = state.paramValues
+        let ntscJSON: String? = (state.ntscEnabled && state.ntscAvailable)
+            ? state.ntscStage?.settingsJSON()
+            : nil
+        let videoSource = state.videoSource
+        let totalFrames = gifFrameCount
+        let evaluator = hasKeyframes ? state.makeTimelineEvaluator() : nil
+        let frameParams: (@Sendable (Int, Int) -> (shader: [String: Float]?, ntscJSON: String?))? =
+            evaluator.map { ev in
+                { i, total in
+                    let t = total > 1 ? Double(i) / Double(total - 1) : 0
+                    return (shader: ev.shaderParams(at: t), ntscJSON: ev.ntscJSON(at: t))
+                }
+            }
+        let state = state
+
+        Task {
+            do {
+                if let vs = videoSource {
+                    try await exporter.exportVideo(source: vs, paramValues: params,
+                                                   settings: settings,
+                                                   ntscSettingsJSON: ntscJSON) { p in
+                        Task { @MainActor in state.exportProgress = p }
+                    }
+                } else {
+                    try await exporter.exportStill(source: source,
+                                                   totalFrames: totalFrames,
+                                                   paramValues: params,
+                                                   settings: settings,
+                                                   ntscSettingsJSON: ntscJSON,
+                                                   frameParams: frameParams) { p in
+                        Task { @MainActor in state.exportProgress = p }
+                    }
+                }
+                let bytes = (try? FileManager.default
+                    .attributesOfItem(atPath: outURL.path)[.size] as? Int) ?? 0
+                let sizeText = ByteCountFormatter.string(fromByteCount: Int64(bytes ?? 0),
+                                                         countStyle: .file)
+                await MainActor.run {
+                    state.exportStatus = "Wrote \(outURL.lastPathComponent) (\(size.width) × \(size.height), \(sizeText))"
+                    state.exportWorking = false
+                    state.exportProgress = 1
+                    state.exportInProgress = false
+                }
+            } catch {
+                await MainActor.run {
+                    state.exportStatus = "GIF export failed: \(error.localizedDescription)"
+                    state.exportWorking = false
+                    state.exportInProgress = false
+                }
+            }
+        }
+    }
+
     // MARK: - video from a still (VHS motion / keyframe animation)
 
     private func exportStillVideo() {
         guard let source = state.sourceTexture, state.chain != nil else { return }
         let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
-        let codec = state.exportCodec
+        let codec = state.exportFormat.codec ?? .h264
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [codec.isProRes ? .quickTimeMovie : .mpeg4Movie]
@@ -310,7 +467,7 @@ struct ExportPopover: View {
     private func exportMP4() {
         guard let vs = state.videoSource else { return }
         let preset = state.presetsRoot.appendingPathComponent(state.selectedPreset.relativePath)
-        let codec = state.exportCodec
+        let codec = state.exportFormat.codec ?? .h264
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [codec.isProRes ? .quickTimeMovie : .mpeg4Movie]
