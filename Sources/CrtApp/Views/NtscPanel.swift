@@ -14,13 +14,13 @@ struct NtscPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Twirl(expanded: $panelExpanded)
-                Text("VHS (ntsc-rs)").font(.headline)
+                Text("NTSC (TV)").font(.headline)
                 Spacer()
                 if state.ntscAvailable {
                     Toggle("", isOn: $state.ntscEnabled)
                         .toggleStyle(.switch)
                         .labelsHidden()
-                        .help("Emulate the analog signal path (composite artifacts, tape noise) before the CRT shader. Turn on Animate in the View panel to see noise, jitter, and tracking move.")
+                        .help("Emulate the analog signal path (composite artifacts, tape noise) before the CRT shader. Turn on Animate in the palette over the preview to see noise, jitter, and tracking move.")
                 }
             }
 
@@ -120,6 +120,22 @@ private struct NtscControl: View {
                     .help(setting.description ?? "")
                 }
                 if state.ntscBool(setting.name) && groupExpanded {
+                    ForEach(children) { child in
+                        NtscControl(setting: child, depth: depth + 1)
+                    }
+                }
+            }
+            .padding(.leading, indent)
+
+        case .section(let children):
+            // Our own grouping: no on/off, just a heading that folds away.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Twirl(expanded: $groupExpanded)
+                    Text(setting.label).font(.callout).bold().lineLimit(1)
+                }
+                .help(setting.description ?? "")
+                if groupExpanded {
                     ForEach(children) { child in
                         NtscControl(setting: child, depth: depth + 1)
                     }

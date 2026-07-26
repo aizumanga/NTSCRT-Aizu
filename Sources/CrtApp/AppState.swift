@@ -211,6 +211,9 @@ final class AppState {
                 case .int:                   interp[s.name] = .lerpInt
                 case .percentage, .float:    interp[s.name] = .lerp
                 case .group(let children):   walk(children)
+                // Presentation-only grouping: recurse, or its children drop
+                // out of keyframe interpolation entirely.
+                case .section(let children): walk(children)
                 }
             }
         }

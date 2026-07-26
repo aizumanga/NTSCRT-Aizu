@@ -117,6 +117,7 @@ struct ContentView: View {
                 || env["CRT_GIF_SELFTEST"] != nil
                 || env["CRT_EXPORT_FORMAT"] != nil || env["CRT_NTSC_SET"] != nil
                 || env["CRT_NTSC_OFF"] == "1" || env["CRT_INTEGER_OFF"] == "1"
+                || env["CRT_DUMP_NTSC_LAYOUT"] == "1"
                 || env["CRT_COMPARE_OFF"] == "1" || env["CRT_WINDOW_SIZE"] != nil else { return }
         var tries = 0
         while tries < 100 && !((state.sourceTexture != nil) && state.chain != nil) {
@@ -142,6 +143,24 @@ struct ContentView: View {
             }
         }
         if env["CRT_NTSC_OFF"] == "1" { state.ntscEnabled = false }
+        if env["CRT_DUMP_NTSC_LAYOUT"] == "1" {
+            func dump(_ items: [NtscSetting], _ depth: Int) {
+                for s in items {
+                    let pad = String(repeating: "  ", count: depth)
+                    switch s.kind {
+                    case .group(let c):
+                        print("\(pad)[group] \(s.label)  (\(s.name))"); dump(c, depth + 1)
+                    case .section(let c):
+                        print("\(pad)[section] \(s.label)  (\(s.name))"); dump(c, depth + 1)
+                    default:
+                        print("\(pad)- \(s.label)  (\(s.name))")
+                    }
+                }
+            }
+            dump(state.ntscDescriptors, 0)
+            print("NTSC-LAYOUT-END")
+            exit(0)
+        }
         if env["CRT_INTEGER_OFF"] == "1" { state.integerScale = false }
         // CRT_WINDOW_SIZE="WxH" — drive the drawable size so both letterbox
         // parities can be reproduced deliberately.
@@ -405,7 +424,7 @@ struct ContentView: View {
                 get: { state.timelineEnabled },
                 set: { state.timelineEnabled = $0 }
             )) {
-                Label("Timeline", systemImage: "timeline.selection")
+                Label("Animate", systemImage: "timeline.selection")
                     .labelStyle(.titleAndIcon)
             }
             .toggleStyle(.button)

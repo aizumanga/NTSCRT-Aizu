@@ -34,7 +34,7 @@ struct TimelineBar: View {
     private var controlsRow: some View {
         @Bindable var state = state
         return HStack(spacing: 10) {
-            Text("TIMELINE")
+            Text("ANIMATE")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .kerning(0.8)

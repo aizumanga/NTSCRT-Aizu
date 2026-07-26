@@ -102,6 +102,7 @@ For iteration and headless/screenshot verification:
 - `CRT_INTEGER_OFF=1` / `CRT_COMPARE_OFF=1` — start with integer scale or compare off
 - `CRT_WINDOW_SIZE=WxH` — force the window size, so both letterbox parities can be reproduced deliberately
 - `CRT_SCALE_LOG=1` — log drawable/target sizes and letterbox parity on each size change
+- `CRT_DUMP_NTSC_LAYOUT=1` — print the NTSC panel's grouping/label tree and exit (verifies `NtscSetting.houseLayout`)
 - `CRT_TL_AUTOKEY_TEST=1` — assert the auto-key rules (edit on a keyframe rewrites it, edits between keyframes don't, scrubbing never mutates), print PASS/FAIL, exit
 - `CRT_COMPARE_X=<0…1>` — place the compare divider at launch (edge-case captures)
 - `CRT_FRONT=1` — activate the app at launch

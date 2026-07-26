@@ -12,7 +12,7 @@ struct ShaderPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Twirl(expanded: $panelExpanded)
-                Text("Shader").font(.headline)
+                Text("CRT").font(.headline)
                 Spacer()
                 Toggle("", isOn: $state.shaderEnabled)
                     .toggleStyle(.switch)

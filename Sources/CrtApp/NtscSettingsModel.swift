@@ -12,6 +12,9 @@ struct NtscSetting: Identifiable {
         case float(min: Double, max: Double, logarithmic: Bool)
         case enumeration(options: [(label: String, index: Int)])
         case group(children: [NtscSetting])
+        /// Collapsible heading with no on/off of its own — a grouping we add
+        /// for readability, not something ntsc-rs has a setting for.
+        case section(children: [NtscSetting])
     }
 
     let name: String        // stable JSON key
@@ -26,7 +29,53 @@ struct NtscSetting: Identifiable {
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return []
         }
-        return arr.compactMap(parse(node:))
+        return houseLayout(arr.compactMap(parse(node:)))
+    }
+
+    /// Relabel and regroup a few of ntsc-rs's settings for legibility.
+    ///
+    /// Presentation only — the `name` keys, ranges and values are untouched,
+    /// so preset JSON still round-trips with the ntsc-rs desktop app.
+    static func houseLayout(_ settings: [NtscSetting]) -> [NtscSetting] {
+        // "Scale" multiplies the whole signal stage, so it reads to a user as
+        // the master intensity even though ntsc-rs frames it as a scale.
+        let relabels: [String: String] = [
+            "scale_settings": "Intensity",
+            "bandwidth_scale": "Horizontal intensity",
+            "vertical_scale": "Vertical intensity",
+        ]
+        func relabel(_ s: NtscSetting) -> NtscSetting {
+            var kind = s.kind
+            if case .group(let kids) = s.kind {
+                kind = .group(children: kids.map(relabel))
+            }
+            return NtscSetting(name: s.name,
+                               label: relabels[s.name] ?? s.label,
+                               description: s.description,
+                               kind: kind)
+        }
+        var out = settings.map(relabel)
+
+        // Four related chroma controls sit loose at the top level; collect
+        // them under one heading.
+        let chroma = ["chroma_phase_error", "chroma_phase_noise_intensity",
+                      "chroma_delay_horizontal", "chroma_delay_vertical"]
+        let members = chroma.compactMap { name in out.first { $0.name == name } }
+        if members.count == chroma.count,
+           let anchor = out.firstIndex(where: { $0.name == chroma[0] }) {
+            out.removeAll { chroma.contains($0.name) }
+            out.insert(NtscSetting(name: "chroma_distortion",
+                                   label: "Chroma distortion",
+                                   description: "Phase and delay errors in the colour subcarrier.",
+                                   kind: .section(children: members)),
+                       at: min(anchor, out.count))
+        }
+
+        // Intensity leads: it's the control most likely to be reached for.
+        if let i = out.firstIndex(where: { $0.name == "scale_settings" }) {
+            out.insert(out.remove(at: i), at: 0)
+        }
+        return out
     }
 
     private static func parse(node: [String: Any]) -> NtscSetting? {
