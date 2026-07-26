@@ -435,7 +435,9 @@ public final class Mp4Exporter {
                 if let stage = ntscStage {
                     frameInput = try self.pipeline.prepareChainInput(
                         source: source, downscale: frameDownscale,
-                        ntsc: stage, frameCount: frameIndex + 1)
+                        ntsc: stage, frameCount: frameIndex + 1,
+                        // Stills: one fixed image for every frame.
+                        sourceVersion: 0)
                     frameDownscale = nil
                 }
                 if let supersample {

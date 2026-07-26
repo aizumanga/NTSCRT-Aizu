@@ -35,7 +35,12 @@ final class AppState {
         }
     }
     private(set) var sourceKind: SourceKind?
-    private(set) var sourceTexture: MTLTexture?
+    private(set) var sourceTexture: MTLTexture? {
+        didSet { sourceVersion &+= 1 }
+    }
+    /// Bumped whenever the source pixels change (load, scrub, playback), so
+    /// the NTSC stage knows when its cached readback is still good.
+    private(set) var sourceVersion: Int = 0
     private(set) var sourceError: String?
 
     /// For video sources only: 0..<videoSource.totalFrames.

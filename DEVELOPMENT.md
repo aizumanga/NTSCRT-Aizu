@@ -87,7 +87,7 @@ For iteration and headless/screenshot verification:
 - `CRT_PRESET=<id>` — start on a shader preset (ids in `Presets.swift`, e.g. `royale`, `hyllian`)
 - `CRT_NTSC=1` — start with the VHS stage enabled
 - `CRT_NTSCRS` / `CRT_LIBRASHADER` / `CRT_PRESETS` — override dylib/shader locations
-- `CRT_PERF_LOG=1` — log chain-render vs composite-only draws to stderr
+- `CRT_PERF_LOG=1` — log chain-render vs composite-only draws, plus fps / ms-per-draw / main-thread duty cycle every 60 frames
 - `CRT_DUMP_CONTROLS=1` — print the param→control classification for every preset, then exit
 - `CRT_FORCE_MANAGED=1` — use `.managed` CPU-readback textures (the discrete-GPU path) even on unified memory
 - `CRT_PALETTE_FADE=<seconds>` — override the floating view palette's 2 s idle fade

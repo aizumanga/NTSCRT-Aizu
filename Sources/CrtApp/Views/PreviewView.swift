@@ -39,6 +39,12 @@ struct PreviewView: NSViewRepresentable {
         // isPaused flips to false (toggling Animate off→on froze otherwise).
         let animating = state.animatePreview && !state.exportInProgress
         if animating {
+            // The ntsc-rs stage is CPU work at the source's full resolution,
+            // and it runs on this thread — measured at ~10 ms a frame on a
+            // 1024² source, which at 60 fps leaves almost nothing for the UI
+            // and makes the sidebar feel stuck. NTSC is a 30 fps format, so
+            // capping there costs nothing visually and halves the load.
+            nsView.preferredFramesPerSecond = state.ntscEnabled ? 30 : 60
             if nsView.enableSetNeedsDisplay || nsView.isPaused {
                 nsView.enableSetNeedsDisplay = false
                 nsView.isPaused = false
@@ -86,6 +92,10 @@ struct PreviewView: NSViewRepresentable {
         private var lastRenderedChainTick: Int? = nil
 
         private static let perfLog = ProcessInfo.processInfo.environment["CRT_PERF_LOG"] != nil
+        private static var frameCount = 0
+        private static var frameMsTotal = 0.0
+        private static var frameMsMax = 0.0
+        private static var windowStart: UInt64 = 0
 
         init(state: AppState) {
             self.state = state
@@ -107,6 +117,30 @@ struct PreviewView: NSViewRepresentable {
         }
 
         func draw(in view: MTKView) {
+            // Everything here runs on the main thread (librashader's Metal
+            // runtime isn't thread-safe), including the wait for a free
+            // drawable — so this interval is exactly how long the UI is
+            // blocked per frame.
+            let drawStart = Self.perfLog ? DispatchTime.now().uptimeNanoseconds : 0
+            defer {
+                if Self.perfLog {
+                    let ms = Double(DispatchTime.now().uptimeNanoseconds - drawStart) / 1_000_000
+                    Self.frameCount += 1
+                    Self.frameMsTotal += ms
+                    Self.frameMsMax = max(Self.frameMsMax, ms)
+                    if Self.windowStart == 0 { Self.windowStart = drawStart }
+                    if Self.frameCount >= 60 {
+                        let span = Double(DispatchTime.now().uptimeNanoseconds - Self.windowStart) / 1_000_000
+                        let fps = Double(Self.frameCount) / (span / 1000)
+                        let duty = 100 * Self.frameMsTotal / span
+                        fputs(String(format: "[perf] %.0f fps, mean %.1f ms/draw, max %.1f ms — main thread %.0f%% busy\n",
+                                     fps, Self.frameMsTotal / Double(Self.frameCount), Self.frameMsMax, duty),
+                              stderr)
+                        Self.frameCount = 0; Self.frameMsTotal = 0; Self.frameMsMax = 0
+                        Self.windowStart = 0
+                    }
+                }
+            }
             guard let drawable = view.currentDrawable,
                   let cb = state.context.queue.makeCommandBuffer() else { return }
 
@@ -153,7 +187,8 @@ struct PreviewView: NSViewRepresentable {
                     do {
                         chainSource = try state.pipeline.prepareChainInput(
                             source: source, downscale: spec,
-                            ntsc: stage, frameCount: state.frameCounter)
+                            ntsc: stage, frameCount: state.frameCounter,
+                            sourceVersion: state.sourceVersion)
                         spec = nil
                     } catch {
                         // Fall back to the clean path this frame.

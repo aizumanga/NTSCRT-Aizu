@@ -113,7 +113,8 @@ public final class GifExporter {
                         try stage.setSettingsJSON(json)
                     }
                 }
-                let image = try ctx.renderFrame(source: source, frameIndex: i + 1, pipeline: pipeline)
+                let image = try ctx.renderFrame(source: source, frameIndex: i + 1,
+                                                pipeline: pipeline, sourceVersion: 0)
                 ctx.add(image)
                 progress(Double(i + 1) / Double(totalFrames))
             }
@@ -152,7 +153,8 @@ public final class GifExporter {
                 if Double(sourceIndex) >= nextWanted {
                     let image = try ctx.renderFrame(source: frame.texture,
                                                     frameIndex: written + 1,
-                                                    pipeline: pipeline)
+                                                    pipeline: pipeline,
+                                                    sourceVersion: nil)   // new pixels each frame
                     ctx.add(image)
                     written += 1
                     nextWanted += step
@@ -237,7 +239,12 @@ public final class GifExporter {
             ] as CFDictionary
         }
 
-        func renderFrame(source: MTLTexture, frameIndex: Int, pipeline: Pipeline) throws -> CGImage {
+        /// - Parameter sourceVersion: a constant for a still (one fixed image
+        ///   for every frame, so the readback is reusable), nil for video —
+        ///   passing a constant there would freeze frame one for the whole
+        ///   clip.
+        func renderFrame(source: MTLTexture, frameIndex: Int, pipeline: Pipeline,
+                         sourceVersion: Int?) throws -> CGImage {
             guard let cb = queue.makeCommandBuffer() else {
                 throw Error.encodeFailed("command buffer")
             }
@@ -245,7 +252,8 @@ public final class GifExporter {
             var downscale = settings.downscale
             if let stage = ntscStage {
                 input = try pipeline.prepareChainInput(source: source, downscale: downscale,
-                                                       ntsc: stage, frameCount: frameIndex)
+                                                       ntsc: stage, frameCount: frameIndex,
+                                                       sourceVersion: sourceVersion)
                 downscale = nil
             }
             // Render big and integrate down, so the scanline pattern isn't

@@ -47,6 +47,10 @@ public final class NtscStage {
     private let filter: NTSCFilter
     private var roundTrip: MTLTexture?
     private var bytes: [UInt8] = []
+    /// Clean (pre-effect) pixels of the last input read back, and the caller's
+    /// id for those contents. See `process(input:frameIndex:inputVersion:…)`.
+    private var cleanBytes: [UInt8] = []
+    private var cleanVersion: Int?
 
     /// nil if the ntscrs-capi dylib hasn't been loaded (NTSCFilter.loadLibrary).
     public init?() {
@@ -70,8 +74,16 @@ public final class NtscStage {
     /// Apply the effect to `input` and return a texture holding the result.
     /// The returned texture is owned by this stage and reused across calls —
     /// consume it before the next `process` call.
+    /// - Parameter inputVersion: identifies the *contents* of `input`. While
+    ///   it stays the same, the clean pixels are reused instead of being read
+    ///   back from the GPU again. Animating a still re-runs this every frame
+    ///   with an unchanged image, and the readback (a blit plus a full
+    ///   `waitUntilCompleted` sync) costs far more than keeping a copy. Pass
+    ///   a value that changes whenever the texture's contents do — a frame
+    ///   index for video, a constant for a fixed still.
     public func process(input: MTLTexture,
                         frameIndex: Int,
+                        inputVersion: Int? = nil,
                         device: MTLDevice,
                         queue: MTLCommandQueue) throws -> MTLTexture {
         let w = input.width, h = input.height
@@ -88,31 +100,48 @@ public final class NtscStage {
         }
         guard let tex = roundTrip else { throw Error.textureAlloc }
 
-        // GPU → CPU-visible copy (synchronize required for managed).
-        guard let cb = queue.makeCommandBuffer(),
-              let blit = cb.makeBlitCommandEncoder() else { throw Error.commandBuffer }
-        blit.copy(from: input,
-                  sourceSlice: 0, sourceLevel: 0,
-                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-                  sourceSize: MTLSize(width: w, height: h, depth: 1),
-                  to: tex,
-                  destinationSlice: 0, destinationLevel: 0,
-                  destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
-        if tex.storageMode == .managed {
-            blit.synchronize(resource: tex)
-        }
-        blit.endEncoding()
-        cb.commit()
-        cb.waitUntilCompleted()
-
-        // CPU: ntsc-rs in place.
         let rowBytes = w * 4
         let count = rowBytes * h
-        if bytes.count != count { bytes = [UInt8](repeating: 0, count: count) }
         let region = MTLRegionMake2D(0, 0, w, h)
+
+        let cacheUsable = inputVersion != nil
+            && inputVersion == cleanVersion
+            && cleanBytes.count == count
+        if !cacheUsable {
+            // GPU → CPU-visible copy (synchronize required for managed).
+            guard let cb = queue.makeCommandBuffer(),
+                  let blit = cb.makeBlitCommandEncoder() else { throw Error.commandBuffer }
+            blit.copy(from: input,
+                      sourceSlice: 0, sourceLevel: 0,
+                      sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                      sourceSize: MTLSize(width: w, height: h, depth: 1),
+                      to: tex,
+                      destinationSlice: 0, destinationLevel: 0,
+                      destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+            if tex.storageMode == .managed {
+                blit.synchronize(resource: tex)
+            }
+            blit.endEncoding()
+            cb.commit()
+            cb.waitUntilCompleted()
+
+            if cleanBytes.count != count { cleanBytes = [UInt8](repeating: 0, count: count) }
+            cleanBytes.withUnsafeMutableBytes { raw in
+                tex.getBytes(raw.baseAddress!, bytesPerRow: rowBytes, from: region, mipmapLevel: 0)
+            }
+            cleanVersion = inputVersion
+        }
+
+        // CPU: ntsc-rs in place, over a copy — the effect is destructive and
+        // the clean pixels have to survive for the next frame.
+        if bytes.count != count { bytes = [UInt8](repeating: 0, count: count) }
+        bytes.withUnsafeMutableBytes { dst in
+            cleanBytes.withUnsafeBytes { src in
+                dst.copyMemory(from: src)
+            }
+        }
         var ok = false
         bytes.withUnsafeMutableBytes { raw in
-            tex.getBytes(raw.baseAddress!, bytesPerRow: rowBytes, from: region, mipmapLevel: 0)
             ok = filter.processBGRA8(raw.baseAddress!, width: UInt(w), height: UInt(h),
                                      rowBytes: UInt(rowBytes), frameIndex: frameIndex)
         }

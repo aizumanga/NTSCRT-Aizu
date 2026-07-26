@@ -72,11 +72,15 @@ public final class Pipeline {
     /// scale artifacts with video size), then the degraded signal is
     /// downscaled for the shader. The result replaces both `inputTexture`
     /// and `downscale` in a subsequent `encode` call (pass downscale: nil).
+    /// - Parameter sourceVersion: identifies `source`'s contents so the NTSC
+    ///   stage can skip re-reading unchanged pixels (see NtscStage.process).
     public func prepareChainInput(source: MTLTexture,
                                   downscale: DownscaleSpec?,
                                   ntsc: NtscStage,
-                                  frameCount: Int) throws -> MTLTexture {
+                                  frameCount: Int,
+                                  sourceVersion: Int? = nil) throws -> MTLTexture {
         let processed = try ntsc.process(input: source, frameIndex: frameCount,
+                                         inputVersion: sourceVersion,
                                          device: context.device, queue: context.queue)
         guard let spec = downscale else { return processed }
 
