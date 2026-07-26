@@ -129,10 +129,19 @@ private struct NtscControl: View {
 
         case .section(let children):
             // Our own grouping: no on/off, just a heading that folds away.
+            // With no switch competing for the row, the whole header can be
+            // the target instead of just the chevron.
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
                     Twirl(expanded: $groupExpanded)
                     Text(setting.label).font(.callout).bold().lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    var t = Transaction()
+                    t.disablesAnimations = true
+                    withTransaction(t) { groupExpanded.toggle() }
                 }
                 .help(setting.description ?? "")
                 if groupExpanded {

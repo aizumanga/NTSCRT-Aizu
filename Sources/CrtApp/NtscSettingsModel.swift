@@ -72,7 +72,12 @@ struct NtscSetting: Identifiable {
         }
 
         // Intensity leads: it's the control most likely to be reached for.
-        if let i = out.firstIndex(where: { $0.name == "scale_settings" }) {
+        // Note: collapsing a group near the TOP costs more than one near the
+        // bottom (every row below it has to be re-laid out) — measured 40 ms
+        // here vs 9 ms mid-list. CRT_NO_HOUSE_ORDER=1 restores ntsc-rs's
+        // order for that A/B.
+        if ProcessInfo.processInfo.environment["CRT_NO_HOUSE_ORDER"] != "1",
+           let i = out.firstIndex(where: { $0.name == "scale_settings" }) {
             out.insert(out.remove(at: i), at: 0)
         }
         return out

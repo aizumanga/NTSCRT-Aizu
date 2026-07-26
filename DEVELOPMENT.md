@@ -102,6 +102,8 @@ For iteration and headless/screenshot verification:
 - `CRT_INTEGER_OFF=1` / `CRT_COMPARE_OFF=1` — start with integer scale or compare off
 - `CRT_WINDOW_SIZE=WxH` — force the window size, so both letterbox parities can be reproduced deliberately
 - `CRT_SCALE_LOG=1` — log drawable/target sizes and letterbox parity on each size change
+- `CRT_PANEL_BENCH=1` — time showing/hiding each VHS group's children and exit (`CRT_PANEL_BENCH_ORDER=a,b,c` picks the groups). Collapsing near the TOP of the panel costs more, since every row below is re-laid out — measured 40 ms for the first group vs ~9 ms mid-list
+- `CRT_NO_HOUSE_ORDER=1` — keep ntsc-rs's own setting order (Intensity not hoisted), for that A/B
 - `CRT_DUMP_NTSC_LAYOUT=1` — print the NTSC panel's grouping/label tree and exit (verifies `NtscSetting.houseLayout`)
 - `CRT_TL_AUTOKEY_TEST=1` — assert the auto-key rules (edit on a keyframe rewrites it, edits between keyframes don't, scrubbing never mutates), print PASS/FAIL, exit
 - `CRT_COMPARE_X=<0…1>` — place the compare divider at launch (edge-case captures)

@@ -117,7 +117,7 @@ struct ContentView: View {
                 || env["CRT_GIF_SELFTEST"] != nil
                 || env["CRT_EXPORT_FORMAT"] != nil || env["CRT_NTSC_SET"] != nil
                 || env["CRT_NTSC_OFF"] == "1" || env["CRT_INTEGER_OFF"] == "1"
-                || env["CRT_DUMP_NTSC_LAYOUT"] == "1"
+                || env["CRT_DUMP_NTSC_LAYOUT"] == "1" || env["CRT_PANEL_BENCH"] == "1"
                 || env["CRT_COMPARE_OFF"] == "1" || env["CRT_WINDOW_SIZE"] != nil else { return }
         var tries = 0
         while tries < 100 && !((state.sourceTexture != nil) && state.chain != nil) {
@@ -143,6 +143,47 @@ struct ContentView: View {
             }
         }
         if env["CRT_NTSC_OFF"] == "1" { state.ntscEnabled = false }
+        // CRT_PANEL_BENCH=1: time a show/hide of each VHS group's children.
+        // Toggling a group's boolean adds/removes exactly the subtree that
+        // collapsing it does, so this measures collapse cost headlessly.
+        if env["CRT_PANEL_BENCH"] == "1" {
+            try? await Task.sleep(for: .milliseconds(1200))
+            func flush() {
+                CATransaction.flush()
+                if let cv = NSApp.windows.first?.contentView {
+                    cv.layoutSubtreeIfNeeded()
+                    cv.displayIfNeeded()
+                }
+            }
+            let groups = (env["CRT_PANEL_BENCH_ORDER"]?.split(separator: ",").map(String.init))
+                ?? ["composite_noise", "head_switching", "tracking_noise",
+                    "ringing", "luma_noise", "chroma_noise",
+                    "vhs_settings", "scale_settings"]
+            for g in groups {
+                var worst = 0.0, total = 0.0, setMsTotal = 0.0
+                var samples = 0
+                for _ in 0..<6 {
+                    for v in [false, true] {
+                        let t0 = DispatchTime.now().uptimeNanoseconds
+                        state.setNtscValue(g, v)
+                        let tSet = DispatchTime.now().uptimeNanoseconds
+                        flush()
+                        let t1 = DispatchTime.now().uptimeNanoseconds
+                        let ms = Double(t1 - t0) / 1_000_000
+                        setMsTotal += Double(tSet - t0) / 1_000_000
+                        total += ms; worst = max(worst, ms); samples += 1
+                        try? await Task.sleep(for: .milliseconds(30))
+                    }
+                }
+                print(String(format: "BENCH %-22@ total %6.1f ms  = setValue %6.1f ms + ui %6.1f ms   worst %6.1f",
+                             g as NSString, total / Double(samples),
+                             setMsTotal / Double(samples),
+                             (total - setMsTotal) / Double(samples), worst)
+)
+            }
+            print("BENCH-END")
+            exit(0)
+        }
         if env["CRT_DUMP_NTSC_LAYOUT"] == "1" {
             func dump(_ items: [NtscSetting], _ depth: Int) {
                 for s in items {

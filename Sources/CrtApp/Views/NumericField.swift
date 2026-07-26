@@ -17,7 +17,13 @@ struct Twirl: View {
             Image(systemName: expanded ? "chevron.down" : "chevron.right")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 14)
+                // The glyph itself is ~8pt across. Without an explicit hit
+                // area a click landing a few points off hits nothing, which
+                // reads as "the twirl needs two or three clicks" rather than
+                // as a miss. contentShape makes the whole square clickable,
+                // not just the drawn chevron.
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
