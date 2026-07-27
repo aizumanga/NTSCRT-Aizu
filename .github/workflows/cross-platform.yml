@@ -1,0 +1,158 @@
+name: Cross-platform
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cross-platform.yml"
+      - "CrossPlatform/**"
+      - "Vendor/ntsc-rs"
+      - "Vendor/slang-shaders"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/cross-platform.yml"
+      - "CrossPlatform/**"
+      - "Vendor/ntsc-rs"
+      - "Vendor/slang-shaders"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Select stable Rust
+        run: rustup default stable
+
+      - name: Verify formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path CrossPlatform/Cargo.toml -- --check
+
+      - name: Check
+        run: cargo check --locked --manifest-path CrossPlatform/Cargo.toml
+
+      - name: Test
+        run: cargo test --locked --manifest-path CrossPlatform/Cargo.toml
+
+  package:
+    name: Package (${{ matrix.name }})
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux-x86_64
+          - os: windows-latest
+            name: Windows-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Select stable Rust
+        run: rustup default stable
+
+      - name: Build release executable
+        run: cargo build --release --locked --manifest-path CrossPlatform/Cargo.toml
+
+      - name: Assemble Linux package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          stage="dist/NTSCRT-Linux-x86_64"
+          mkdir -p "$stage/slang-shaders"
+          cp CrossPlatform/target/release/ntscrt "$stage/"
+          cp CrossPlatform/README.md "$stage/README.md"
+          cp -R Vendor/slang-shaders/crt "$stage/slang-shaders/"
+          cp -R Vendor/slang-shaders/include "$stage/slang-shaders/"
+          tar -C dist -czf dist/NTSCRT-Linux-x86_64.tar.gz NTSCRT-Linux-x86_64
+
+      - name: Assemble Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "dist/NTSCRT-Windows-x64"
+          New-Item -ItemType Directory -Force "$stage/slang-shaders" | Out-Null
+          Copy-Item "CrossPlatform/target/release/ntscrt.exe" "$stage/"
+          Copy-Item "CrossPlatform/README.md" "$stage/README.md"
+          Copy-Item "Vendor/slang-shaders/crt" "$stage/slang-shaders/crt" -Recurse
+          Copy-Item "Vendor/slang-shaders/include" "$stage/slang-shaders/include" -Recurse
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/NTSCRT-Windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NTSCRT-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach packages to release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
