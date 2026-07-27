@@ -27,7 +27,7 @@ The missing features currently depend on the macOS-only AVFoundation, CoreVideo,
 
 ## Installing on Windows
 
-1. Open [Releases](../../releases/latest), expand **Assets**, and download `NTSCRT-Windows-x64.zip`.
+1. Open [Releases](../../../releases/latest), expand **Assets**, and download `NTSCRT-Windows-x64.zip`.
 2. Right-click the downloaded ZIP and choose **Extract All**.
 3. Open the extracted `NTSCRT-Windows-x64` folder.
 4. Confirm that it contains both `ntscrt.exe` and `slang-shaders`.
@@ -41,7 +41,7 @@ No separate Rust, Python, RetroArch, or `ntsc-rs` installation is required for t
 
 ## Installing on Linux
 
-Open [Releases](../../releases/latest) and download `NTSCRT-Linux-x86_64.tar.gz`, then run:
+Open [Releases](../../../releases/latest) and download `NTSCRT-Linux-x86_64.tar.gz`, then run:
 
 ```sh
 tar -xzf NTSCRT-Linux-x86_64.tar.gz
