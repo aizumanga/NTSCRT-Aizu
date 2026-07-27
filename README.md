@@ -4,7 +4,7 @@
 
 **Make any image or video look like it's playing on a 1980s TV.** NTSCRT runs your media through a real analog signal emulation ([ntsc-rs](https://github.com/ntsc-rs/ntsc-rs) — composite artifacts, tape noise, head switching) and then through RetroArch's CRT shaders (via [librashader](https://github.com/SnowflakePowered/librashader) — scanlines, phosphor masks, glow), frame-identical to RetroArch itself.
 
-Full disclosure: **this is two much better projects hacked together.** All of the actual image magic belongs to ntsc-rs and the RetroArch shader community; NTSCRT is the native Mac interface that connects them into one pipeline:
+Full disclosure: **this is two much better projects hacked together.** All of the actual image magic belongs to ntsc-rs and the RetroArch shader community; NTSCRT connects them into one pipeline:
 
 ```
 your image/video → NTSC/VHS signal degradation (full res) → downscale to retro resolution → CRT shader → screen
@@ -12,13 +12,19 @@ your image/video → NTSC/VHS signal degradation (full res) → downscale to ret
 
 ## Download
 
-Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTSCRT** to Applications.
+Grab the package for your operating system from [**Releases**](../../releases/latest). Automated Windows and Linux packages are also available as artifacts from the [Cross-platform workflow](../../actions/workflows/cross-platform.yml).
 
-**Requirements:** macOS 14 or later. The app is a universal binary (Apple Silicon + Intel).
+| Platform | Package | Requirements |
+| --- | --- | --- |
+| macOS | Universal DMG | macOS 14+, Apple Silicon or Intel |
+| Windows | `NTSCRT-Windows-x64.zip` | Windows 10/11 64-bit and a current graphics driver |
+| Linux | `NTSCRT-Linux-x86_64.tar.gz` | X11 or Wayland, desktop portal, and a current Vulkan-capable graphics driver |
+
+The Windows/Linux frontend currently supports the complete still-image pipeline and PNG export. Video, animated GIF export, timeline/keyframes, and individual CRT shader parameters remain macOS-only while their AVFoundation/Metal implementation is ported. See the [cross-platform feature table](CrossPlatform/README.md#current-feature-support).
 
 > **Intel note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
 
-## Using the app
+## Using the macOS app
 
 **Toolbar** — file actions live in the window toolbar: **Open** (⌘O) an image (PNG/JPEG/HEIC) or video (MP4/MOV), save/load a **Preset** (your entire configuration — downscale + VHS + shader + view — as a JSON file), and **Export** (⌘E): stills to PNG; videos to H.264/HEVC .mp4, ProRes .mov (with audio), or animated **GIF**, at your choice of resolution and quality. Scanline detail is brutal on lossy codecs — use the High/Very high quality tiers, or ProRes when it's headed into an edit. Exports are deterministic: same settings + same frame = same pixels.
 
@@ -46,6 +52,7 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 ## Limitations
 
 - The Intel half of the universal build is community-tested, not author-tested (see the note up top).
+- Windows/Linux currently process still images only; video, timeline/keyframes, animated export, and individual CRT shader controls remain macOS-only.
 - The NTSC stage runs on the CPU at your source's full resolution — with **Animate** on or during video playback, 4K+ sources will noticeably drop the preview frame rate. Exports always render every frame regardless.
 - Video preview playback favors correctness over speed and can run below native fps on heavy footage; the exported MP4 is full quality.
 - A few crt-royale parameters are compile-time disabled in the shader itself (marked "static in this shader build") — they do nothing in RetroArch either.
@@ -53,7 +60,7 @@ Grab the DMG from [**Releases**](../../releases/latest), open it, and drag **NTS
 
 ## Building from source
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the full developer setup (Swift + Rust toolchains, vendored dependencies, CLI tools, release pipeline).
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the full developer setup. Windows/Linux contributors can start with the shorter [cross-platform build guide](CrossPlatform/README.md#build).
 
 ## Credits
 

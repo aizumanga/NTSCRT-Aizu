@@ -26,6 +26,7 @@ Sources/
   CrtCore/         Shared Swift: Downscaler, Pipeline, ImageIO, presets list
   CrtSmoke/        CLI verifier: input image → optional downscale → shader → PNG
   CrtApp/          SwiftUI app: sidebar UI + MTKView preview + PNG export
+CrossPlatform/     Rust/egui + WGPU frontend for Windows and Linux
 Vendor/
   librashader/     librashader.dylib + headers (built locally; not in git)
   slang-shaders/   submodule of libretro/slang-shaders (preset .slangp files)
@@ -38,7 +39,14 @@ Vendor/
 - Full Xcode (App Store) — required for the SwiftUI app target (Phase 2)
 - Rust toolchain (`brew install rust`) — to build librashader from source
 
-## Build
+For Windows/Linux only:
+
+- Current stable Rust toolchain
+- A current GPU driver (Vulkan is recommended)
+- Linux: X11 or Wayland development libraries and an `xdg-desktop-portal`
+  implementation
+
+## Build the macOS app
 
 ```sh
 git submodule update --init --recursive
@@ -65,6 +73,32 @@ install_name_tool -id @rpath/librashader.dylib Vendor/librashader/librashader.dy
 swift build -c release --product crt-smoke
 swift build -c release --product crt-app
 ```
+
+## Build the Windows/Linux app
+
+The portable frontend uses Rust rather than the macOS-only SwiftUI, AppKit,
+AVFoundation, and Metal layers:
+
+```sh
+git submodule update --init --recursive
+cargo build --release --locked --manifest-path CrossPlatform/Cargo.toml
+```
+
+Run it from the repository root during development:
+
+```sh
+./CrossPlatform/target/release/ntscrt
+```
+
+On Windows:
+
+```powershell
+.\CrossPlatform\target\release\ntscrt.exe
+```
+
+The cross-platform workflow checks both operating systems and assembles ZIP
+and tar.gz packages containing the executable plus the required `crt/` and
+`include/` shader trees.
 
 ## Optional: the VHS stage (ntsc-rs)
 
