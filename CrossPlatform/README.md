@@ -75,7 +75,9 @@ No separate Rust, Python, RetroArch, or `ntsc-rs` installation is required for t
    - **Nearest** keeps hard pixel edges and is best for pixel art.
    - **Area** is a neutral starting point for screenshots, drawings, and photos.
    - **Bilinear**, **Bicubic**, and **Lanczos** provide progressively smoother alternatives.
-5. Choose one of the seven **CRT shader** presets.
+5. Under **CRT**, choose one of the seven **Built-in CRT preset** options. This is
+   separate from **Load preset file…**, which opens a complete setup you previously
+   saved as JSON.
 6. Leave **Enable ntsc-rs** checked for VHS/composite artifacts, or disable it to apply only downscaling and the CRT shader.
 7. Adjust the settings under **VHS / NTSC**. Hover over a control to see its description when available.
 8. Click **Render preview**. An asterisk in `Render preview *` means the controls changed and the preview is out of date.
@@ -95,7 +97,11 @@ Very large source images can take longer because `ntsc-rs` processes the source 
 
 ## Presets
 
-**Save preset** writes a JSON file containing:
+Use **Built-in CRT preset** in the left sidebar to switch between CRT Aperture,
+Easymode, Glow (Gaussian or Lanczos), Hyllian, Royale, and Sim. These seven
+presets ship with the application and do not need to be downloaded separately.
+
+**Save preset file…** writes a JSON file containing:
 
 - whether `ntsc-rs` is enabled;
 - all NTSC/VHS values;
@@ -103,7 +109,9 @@ Very large source images can take longer because `ntsc-rs` processes the source 
 - output width;
 - the selected CRT shader.
 
-**Load preset** restores those values. A preset does not contain the source image or rendered output, so it is safe to reuse with other images. After loading a preset, open an image if necessary and click **Render preview**.
+**Load preset file…** restores those values. A preset file does not contain the
+source image or rendered output, so it is safe to reuse with other images. After
+loading one, open an image if necessary and click **Render preview**.
 
 ## Troubleshooting
 
@@ -116,6 +124,7 @@ NTSCRT-Windows-x64/       or NTSCRT-Linux-x86_64/
 ├── ntscrt.exe            or ntscrt
 └── slang-shaders/
     ├── crt/
+    ├── blurs/
     └── include/
 ```
 

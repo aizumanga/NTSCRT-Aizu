@@ -40,3 +40,30 @@ pub fn find_shader_root() -> Option<PathBuf> {
 fn is_shader_root(path: &Path) -> bool {
     path.join("crt/crt-easymode.slangp").is_file() && path.join("include").is_dir()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_presets_and_royale_dependencies_exist() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Vendor/slang-shaders");
+
+        for (name, relative_path) in SHADERS {
+            assert!(
+                root.join(relative_path).is_file(),
+                "bundled preset {name} is missing at {relative_path}"
+            );
+        }
+
+        for relative_path in [
+            "blurs/shaders/royale/blur9fast-vertical.slang",
+            "blurs/shaders/royale/blur9fast-horizontal.slang",
+        ] {
+            assert!(
+                root.join(relative_path).is_file(),
+                "CRT Royale dependency is missing at {relative_path}"
+            );
+        }
+    }
+}

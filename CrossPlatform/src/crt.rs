@@ -14,11 +14,11 @@ use librashader::{
     },
 };
 use parking_lot::Mutex;
-use wgpu28::{
+use wgpu29::{
     Buffer, BufferAddress, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device,
-    Extent3d, Instance, Queue, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
-    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureViewDescriptor,
+    ErrorFilter, Extent3d, Instance, Queue, TexelCopyBufferInfo, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureViewDescriptor,
 };
 
 struct BufferDimensions {
@@ -30,7 +30,7 @@ struct BufferDimensions {
 impl BufferDimensions {
     fn new(width: usize, height: usize) -> Self {
         let unpadded_bytes_per_row = width * 4;
-        let align = wgpu28::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let align = wgpu29::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padding = (align - unpadded_bytes_per_row % align) % align;
         Self {
             height,
@@ -64,19 +64,19 @@ async fn render_async(
         bail!("Output dimensions must be greater than zero");
     }
 
-    let instance = Instance::default();
+    let instance = Instance::new(wgpu29::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = instance
-        .request_adapter(&wgpu28::RequestAdapterOptions {
-            power_preference: wgpu28::PowerPreference::HighPerformance,
+        .request_adapter(&wgpu29::RequestAdapterOptions {
+            power_preference: wgpu29::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
         })
         .await
         .context("No compatible graphics adapter was found")?;
 
-    let required_features = wgpu28::Features::ADDRESS_MODE_CLAMP_TO_BORDER
-        | wgpu28::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-        | wgpu28::Features::FLOAT32_FILTERABLE;
+    let required_features = wgpu29::Features::ADDRESS_MODE_CLAMP_TO_BORDER
+        | wgpu29::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        | wgpu29::Features::FLOAT32_FILTERABLE;
     let missing_features = required_features & !adapter.features();
     if !missing_features.is_empty() {
         bail!(
@@ -86,10 +86,10 @@ async fn render_async(
     }
 
     let (device, queue) = adapter
-        .request_device(&wgpu28::DeviceDescriptor {
+        .request_device(&wgpu29::DeviceDescriptor {
             label: Some("NTSCRT shader device"),
             required_features,
-            required_limits: wgpu28::Limits::default(),
+            required_limits: wgpu29::Limits::default(),
             memory_hints: Default::default(),
             ..Default::default()
         })
@@ -104,9 +104,10 @@ async fn render_async(
         output_width,
         output_height,
     )
+    .await
 }
 
-fn render_with_device(
+async fn render_with_device(
     device: &Device,
     queue: &Queue,
     input: &RgbaImage,
@@ -133,7 +134,7 @@ fn render_with_device(
         TexelCopyTextureInfo {
             texture: &input_texture,
             mip_level: 0,
-            origin: wgpu28::Origin3d::ZERO,
+            origin: wgpu29::Origin3d::ZERO,
             aspect: TextureAspect::All,
         },
         input.as_raw(),
@@ -145,7 +146,8 @@ fn render_with_device(
         input_size,
     );
 
-    let mut chain = FilterChain::load_from_path(
+    let load_error_scope = device.push_error_scope(ErrorFilter::Validation);
+    let chain_result = FilterChain::load_from_path(
         preset_path,
         ShaderFeatures::NONE,
         device,
@@ -155,8 +157,15 @@ fn render_with_device(
             enable_cache: false,
             adapter_info: None,
         }),
-    )
-    .with_context(|| format!("Could not load CRT preset {}", preset_path.display()))?;
+    );
+    if let Some(error) = load_error_scope.pop().await {
+        bail!(
+            "Could not load CRT preset {}: {error}",
+            preset_path.display()
+        );
+    }
+    let mut chain = chain_result
+        .with_context(|| format!("Could not load CRT preset {}", preset_path.display()))?;
 
     let output_size = Extent3d {
         width: output_width,
@@ -190,9 +199,12 @@ fn render_with_device(
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("NTSCRT render"),
     });
-    chain
-        .frame(&input_texture, &viewport, &mut encoder, 0, None)
-        .context("CRT shader rendering failed")?;
+    let frame_error_scope = device.push_error_scope(ErrorFilter::Validation);
+    let frame_result = chain.frame(&input_texture, &viewport, &mut encoder, 0, None);
+    if let Some(error) = frame_error_scope.pop().await {
+        bail!("CRT shader rendering failed: {error}");
+    }
+    frame_result.context("CRT shader rendering failed")?;
     encoder.copy_texture_to_buffer(
         output_texture.as_image_copy(),
         TexelCopyBufferInfo {
@@ -208,7 +220,7 @@ fn render_with_device(
 
     let submission = queue.submit([encoder.finish()]);
     device
-        .poll(wgpu28::PollType::Wait {
+        .poll(wgpu29::PollType::Wait {
             submission_index: Some(submission),
             timeout: None,
         })
@@ -236,7 +248,7 @@ fn read_buffer(
 
     output_buffer
         .slice(..)
-        .map_async(wgpu28::MapMode::Read, move |result| {
+        .map_async(wgpu29::MapMode::Read, move |result| {
             if result.is_ok() {
                 let mapped = buffer_for_callback.slice(..).get_mapped_range();
                 let mut output = pixels_for_callback.lock();
@@ -253,7 +265,7 @@ fn read_buffer(
         });
 
     device
-        .poll(wgpu28::PollType::Wait {
+        .poll(wgpu29::PollType::Wait {
             submission_index: None,
             timeout: None,
         })
@@ -265,4 +277,28 @@ fn read_buffer(
     }
     RgbaImage::from_raw(width, height, bytes)
         .ok_or_else(|| anyhow!("The GPU returned an invalid rendered image"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::SHADERS;
+    use image::Rgba;
+
+    #[test]
+    #[ignore = "requires a graphics adapter and compiles every CRT preset"]
+    fn renders_every_bundled_crt_preset() {
+        let shader_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Vendor/slang-shaders");
+        let input = RgbaImage::from_pixel(64, 48, Rgba([90, 160, 220, 255]));
+
+        for (name, relative_path) in SHADERS {
+            let output = render(&input, &shader_root.join(relative_path), 320, 240)
+                .unwrap_or_else(|error| panic!("{name} failed to render: {error:#}"));
+            assert_eq!(
+                output.dimensions(),
+                (320, 240),
+                "{name} returned the wrong dimensions"
+            );
+        }
+    }
 }

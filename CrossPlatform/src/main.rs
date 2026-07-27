@@ -4,7 +4,9 @@ mod pipeline;
 mod settings_ui;
 
 use std::{
+    any::Any,
     fs,
+    panic::{self, AssertUnwindSafe},
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -252,7 +254,14 @@ impl NtscrtApp {
         self.busy = true;
         self.status = "Rendering NTSC and CRT pipeline…".to_owned();
         thread::spawn(move || {
-            let result = pipeline::render(&source, &options);
+            let result =
+                panic::catch_unwind(AssertUnwindSafe(|| pipeline::render(&source, &options)))
+                    .unwrap_or_else(|payload| {
+                        Err(anyhow::anyhow!(
+                            "CRT shader backend failed: {}",
+                            panic_message(payload)
+                        ))
+                    });
             let _ = sender.send(RenderMessage { generation, result });
             context.request_repaint();
         });
@@ -294,10 +303,10 @@ impl NtscrtApp {
                     self.save_output();
                 }
                 ui.separator();
-                if ui.button("Load preset").clicked() {
+                if ui.button("Load preset file…").clicked() {
                     self.load_preset();
                 }
-                if ui.button("Save preset").clicked() {
+                if ui.button("Save preset file…").clicked() {
                     self.save_preset();
                 }
                 ui.separator();
@@ -357,15 +366,24 @@ impl NtscrtApp {
                                     .changed();
                             }
                         });
-                    egui::ComboBox::from_label("CRT shader")
+                    ui.separator();
+                    ui.heading("CRT");
+                    ui.label("Built-in CRT preset");
+                    egui::ComboBox::from_id_salt("built-in-crt-preset")
                         .selected_text(SHADERS[self.shader_index].0)
+                        .width(ui.available_width())
                         .show_ui(ui, |ui| {
                             for (index, (label, _)) in SHADERS.iter().enumerate() {
                                 changed |= ui
                                     .selectable_value(&mut self.shader_index, index, *label)
                                     .changed();
                             }
-                        });
+                        })
+                        .response
+                        .on_hover_text(
+                            "Choose one of the seven CRT presets bundled with NTSCRT. \
+                             Preset files in the toolbar are your saved complete setups.",
+                        );
 
                     ui.separator();
                     ui.heading("VHS / NTSC");
@@ -450,6 +468,16 @@ fn show_texture(ui: &mut egui::Ui, label: &str, texture: Option<&TextureHandle>)
             ui.label("Render preview to see the result.");
         }
     });
+}
+
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else {
+        "unknown graphics backend error".to_owned()
+    }
 }
 
 fn main() -> eframe::Result {
