@@ -55,11 +55,13 @@ See the [Windows/Linux user guide](CrossPlatform/README.md) for control explanat
 1. **Open image** — choose a PNG, JPEG, WebP, BMP, TGA, or GIF. GIF input currently uses only its first frame.
 2. Set **Retro width** — the low internal resolution fed to the CRT shader. `320` is a useful starting point.
 3. Set **Output width** — the width of the exported PNG. Height is calculated automatically from the source aspect ratio.
-4. Choose a resize filter and CRT shader, then adjust the **VHS / NTSC** controls.
+4. Choose a resize filter and a **Built-in CRT preset**, then adjust the **VHS / NTSC** controls.
 5. Click **Render preview** whenever an asterisk appears on that button.
 6. Compare **Source** and **Processed**, then click **Export PNG**.
 
-**Save preset** stores the complete Windows/Linux setup as JSON; **Load preset** restores it later. Presets do not embed the source image.
+Choose the bundled CRT effect from **Built-in CRT preset** in the left sidebar.
+**Save preset file…** stores the complete Windows/Linux setup as JSON;
+**Load preset file…** restores it later. Preset files do not embed the source image.
 
 ## Using the macOS app
 

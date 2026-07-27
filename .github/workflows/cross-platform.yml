@@ -114,7 +114,10 @@ jobs:
           cp CrossPlatform/target/release/ntscrt "$stage/"
           cp CrossPlatform/README.md "$stage/README.md"
           cp -R Vendor/slang-shaders/crt "$stage/slang-shaders/"
+          cp -R Vendor/slang-shaders/blurs "$stage/slang-shaders/"
           cp -R Vendor/slang-shaders/include "$stage/slang-shaders/"
+          test -f "$stage/slang-shaders/blurs/shaders/royale/blur9fast-vertical.slang"
+          test -f "$stage/slang-shaders/blurs/shaders/royale/blur9fast-horizontal.slang"
           tar -C dist -czf dist/NTSCRT-Linux-x86_64.tar.gz NTSCRT-Linux-x86_64
 
       - name: Assemble Windows package
@@ -126,7 +129,10 @@ jobs:
           Copy-Item "CrossPlatform/target/release/ntscrt.exe" "$stage/"
           Copy-Item "CrossPlatform/README.md" "$stage/README.md"
           Copy-Item "Vendor/slang-shaders/crt" "$stage/slang-shaders/crt" -Recurse
+          Copy-Item "Vendor/slang-shaders/blurs" "$stage/slang-shaders/blurs" -Recurse
           Copy-Item "Vendor/slang-shaders/include" "$stage/slang-shaders/include" -Recurse
+          if (-not (Test-Path "$stage/slang-shaders/blurs/shaders/royale/blur9fast-vertical.slang")) { throw "CRT Royale vertical blur is missing" }
+          if (-not (Test-Path "$stage/slang-shaders/blurs/shaders/royale/blur9fast-horizontal.slang")) { throw "CRT Royale horizontal blur is missing" }
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/NTSCRT-Windows-x64.zip"
 
       - uses: actions/upload-artifact@v4

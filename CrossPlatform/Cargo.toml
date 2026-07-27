@@ -1,6 +1,6 @@
 [package]
 name = "ntscrt"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "Cross-platform NTSCRT frontend for Windows and Linux"
 license = "GPL-3.0-only"
@@ -22,7 +22,7 @@ image = { version = "0.25.8", default-features = false, features = [
     "tga",
     "webp",
 ] }
-librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "76462c03", default-features = false, features = [
+librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "0fb80618b071b6ad25b66b979a4908de531d764c", default-features = false, features = [
     "presets",
     "runtime-wgpu",
     "stable",
@@ -36,7 +36,7 @@ rfd = { version = "0.15.3", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-wgpu28 = { package = "wgpu", version = "28" }
+wgpu29 = { package = "wgpu", version = "29.0.3" }
 
 [profile.release]
 codegen-units = 1
