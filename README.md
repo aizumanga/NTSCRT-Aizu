@@ -12,17 +12,54 @@ your image/video → NTSC/VHS signal degradation (full res) → downscale to ret
 
 ## Download
 
-Grab the package for your operating system from [**Releases**](../../releases/latest). Automated Windows and Linux packages are also available as artifacts from the [Cross-platform workflow](../../actions/workflows/cross-platform.yml).
+Open [**Releases**](../../releases/latest), expand **Assets**, and download the package for your operating system.
 
-| Platform | Package | Requirements |
+| Platform | Download | Requirements |
 | --- | --- | --- |
-| macOS | Universal DMG | macOS 14+, Apple Silicon or Intel |
 | Windows | `NTSCRT-Windows-x64.zip` | Windows 10/11 64-bit and a current graphics driver |
-| Linux | `NTSCRT-Linux-x86_64.tar.gz` | X11 or Wayland, desktop portal, and a current Vulkan-capable graphics driver |
+| Linux | `NTSCRT-Linux-x86_64.tar.gz` | 64-bit Linux, X11 or Wayland, and a current Vulkan-capable graphics driver |
+| macOS | Universal DMG | macOS 14+, Apple Silicon or Intel |
 
-The Windows/Linux frontend currently supports the complete still-image pipeline and PNG export. Video, animated GIF export, timeline/keyframes, and individual CRT shader parameters remain macOS-only while their AVFoundation/Metal implementation is ported. See the [cross-platform feature table](CrossPlatform/README.md#current-feature-support).
+If a Windows/Linux release has not been published yet, see [building from source](CrossPlatform/README.md#building-from-source). The automated packages are produced by the [Cross-platform workflow](../../actions/workflows/cross-platform.yml) whenever a release tag is created.
 
-> **Intel note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
+The Windows/Linux frontend currently supports the complete still-image pipeline and PNG export. Video, animated GIF export, timeline/keyframes, and individual CRT shader parameters remain macOS-only while their AVFoundation/Metal implementation is ported. See the [full feature table](CrossPlatform/README.md#current-feature-support).
+
+> **Intel Mac note:** I build and test NTSCRT on Apple Silicon and haven't personally tested the Intel build. Intel support exists thanks to a contributed fix ([#1](../../pull/1)) verified by its author on an Intel iMac Pro — if something misbehaves on your Intel Mac, please open an issue.
+
+## Windows quick start
+
+1. Download `NTSCRT-Windows-x64.zip` from **Releases**.
+2. Right-click the ZIP, choose **Extract All**, and open the extracted folder.
+3. Keep `ntscrt.exe` and the `slang-shaders` folder together. Do not run the app from inside the ZIP or move only the EXE.
+4. Double-click `ntscrt.exe`.
+5. Click **Open image**, adjust the settings, click **Render preview**, and then **Export PNG**.
+
+The release is not code-signed. Windows SmartScreen may show an “unrecognized app” warning on the first launch. If you downloaded it from this repository, choose **More info → Run anyway**. You should never bypass that warning for a copy obtained elsewhere.
+
+## Linux quick start
+
+Download the archive, then extract and run it:
+
+```sh
+tar -xzf NTSCRT-Linux-x86_64.tar.gz
+cd NTSCRT-Linux-x86_64
+./ntscrt
+```
+
+Keep the `ntscrt` executable and the `slang-shaders` folder together. If your file manager removed the executable bit, run `chmod +x ntscrt`. On minimal desktops or window managers, the Open/Save dialogs may require `xdg-desktop-portal` plus a portal backend for your desktop.
+
+See the [Windows/Linux user guide](CrossPlatform/README.md) for control explanations, recommended settings, troubleshooting, presets, and source-build instructions.
+
+## Using the Windows/Linux app
+
+1. **Open image** — choose a PNG, JPEG, WebP, BMP, TGA, or GIF. GIF input currently uses only its first frame.
+2. Set **Retro width** — the low internal resolution fed to the CRT shader. `320` is a useful starting point.
+3. Set **Output width** — the width of the exported PNG. Height is calculated automatically from the source aspect ratio.
+4. Choose a resize filter and CRT shader, then adjust the **VHS / NTSC** controls.
+5. Click **Render preview** whenever an asterisk appears on that button.
+6. Compare **Source** and **Processed**, then click **Export PNG**.
+
+**Save preset** stores the complete Windows/Linux setup as JSON; **Load preset** restores it later. Presets do not embed the source image.
 
 ## Using the macOS app
 
@@ -51,16 +88,16 @@ The Windows/Linux frontend currently supports the complete still-image pipeline 
 
 ## Limitations
 
-- The Intel half of the universal build is community-tested, not author-tested (see the note up top).
+- The Intel half of the universal Mac build is community-tested, not author-tested.
 - Windows/Linux currently process still images only; video, timeline/keyframes, animated export, and individual CRT shader controls remain macOS-only.
-- The NTSC stage runs on the CPU at your source's full resolution — with **Animate** on or during video playback, 4K+ sources will noticeably drop the preview frame rate. Exports always render every frame regardless.
-- Video preview playback favors correctness over speed and can run below native fps on heavy footage; the exported MP4 is full quality.
-- A few crt-royale parameters are compile-time disabled in the shader itself (marked "static in this shader build") — they do nothing in RetroArch either.
-- No undo — save Presets before big experiments.
+- GIF files open on Windows/Linux, but only the first frame is processed.
+- The NTSC stage runs on the CPU at the source's full resolution, so very large images may render slowly.
+- A few crt-royale parameters are compile-time disabled in the macOS shader build.
+- There is no undo; save presets before large experiments.
 
 ## Building from source
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the full developer setup. Windows/Linux contributors can start with the shorter [cross-platform build guide](CrossPlatform/README.md#build).
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the full macOS developer setup. Windows/Linux contributors can use the dedicated [cross-platform build guide](CrossPlatform/README.md#building-from-source).
 
 ## Credits
 
